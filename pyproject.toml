@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "energyoptimizer"
+version = "0.1.0"
+description = "energy optimization tools for scalable DER design and control"
+authors = ["emunsing <eric.munsing@gmail.com>"]
+license = "commercial license required"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pandas = "*"
+numpy = "*"
+cvxpy = "*"
+pvlib = "*"
+matplotlib = "*"
+pytest = "*"
+pyyaml = "*"
+panel = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
