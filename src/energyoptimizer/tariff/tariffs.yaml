@@ -1,0 +1,56 @@
+PGE_B_19_R:
+  name: PGE B-19 Option R
+  seasons:
+    - name: summer
+      period: [6, 7, 8, 9]  # June-September
+      periods:
+        - name: peak
+          hours: [16, 17, 18, 19, 20]  # 4PM-9PM
+        - name: partial-peak
+          hours: [14, 15, 21]  # 2PM-4PM, 9PM-10PM
+        - name: off-peak
+          hours: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 22, 23]  # all other hours
+      rates:
+        energy_import_rate_kwh:
+          peak: 0.46147
+          partial-peak: 0.27763
+          off-peak: 0.21716
+        energy_export_rate_kwh:
+          default: null
+        demand_charge_kw:
+          peak: 6.97
+          partial-peak: 2.01
+          any: 39.95
+    - name: winter
+      period: [10, 11, 12, 1, 2]  # October-February
+      periods:
+        - name: peak
+          hours: [16, 17, 18, 19, 20]  # 4PM-9PM
+        - name: off-peak
+          hours: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 21, 22, 23]  # all other hours
+      rates:
+        energy_import_rate_kwh:
+          peak: 0.20421
+          off-peak: 0.16189
+        energy_export_rate_kwh:
+          default: null
+        demand_charge_kw:
+          any: 39.95
+    - name: spring
+      period: [3, 4, 5]  # March-May
+      periods:
+        - name: peak
+          hours: [16, 17, 18, 19, 20]  # 4PM-9PM
+        - name: super_off_peak
+          hours: [9, 10, 11, 12, 13]  # 9AM-2PM
+        - name: off-peak
+          hours: [0, 1, 2, 3, 4, 5, 6, 7, 8, 14, 15, 21, 22, 23]  # all other hours
+      rates:
+        energy_import_rate_kwh:
+          peak: 0.20421
+          off-peak: 0.16189
+          super_off_peak: 0.12607
+        energy_export_rate_kwh:
+          default: null
+        demand_charge_kw:
+          any: 39.95 

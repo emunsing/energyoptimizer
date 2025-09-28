@@ -5,6 +5,10 @@ description = "energy optimization tools for scalable DER design and control"
 authors = ["emunsing <eric.munsing@gmail.com>"]
 license = "commercial license required"
 readme = "README.md"
+packages = [
+    { include = "energyoptimizer", from = "src" }
+]
+
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -17,6 +21,9 @@ pytest = "*"
 pyyaml = "*"
 panel = "*"
 
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+
