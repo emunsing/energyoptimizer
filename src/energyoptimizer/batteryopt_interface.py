@@ -177,9 +177,12 @@ class FinancialModelInputs:
     - Reference upgrade cost without DER
     """
 
-class OptimizationInputs:
-    optimization_type # Enum choice
-    optimization_freq # enum choice
+class OptimizationRunnerInputs:
+    optimization_type # Enum choice:
+    optimization_clock # enum choice
+    optimization_start: pd.Timestamp
+    optimization_end: pd.Timestamp
+    parallelize: bool = True
     design_inputs: DesignInputs
     financial_model_inputs: FinancialModelInputs
 
