@@ -27,6 +27,20 @@ def get_index_timedelta_hr(time_index: pd.DatetimeIndex) -> float:
     dt = time_intervals[0].total_seconds() / 3600
     return dt
 
+def power_to_energy(power_series: pd.Series) -> pd.Series:
+    """
+    Convert a power series (kW) to an energy series (kWh).
+
+    Args:
+        power_series: Power series with datetime index (positive = import, negative = export)
+
+    Returns:
+        Energy series in kWh
+    """
+    dt_hr = get_index_timedelta_hr(power_series.index)
+    energy_series = power_series * dt_hr
+    return energy_series
+
 class TariffModel:
     """
     A comprehensive tariff model that handles energy charges, demand charges, and billing cycles.
@@ -191,7 +205,7 @@ class TariffModel:
         )
         self.billing_cycles = []
         for start, end in zip(billing_periods[:-1], billing_periods[1:]):
-            self.billing_cycles.append((start + MIN_DT, end))
+            self.billing_cycles.append((start, end - MIN_DT))
 
 
     def compute_demand_charge(self, power_series: pd.Series) -> float:
@@ -205,22 +219,18 @@ class TariffModel:
             Total demand charge in dollars
         """
         total_demand_charge = 0.0
-        power_series = power_series.reindex(self.tariff_timeseries.index).ffill()
+        aligned_power_series = power_series.resample(self.tariff_timeseries.index.freq, closed='left').max().dropna()
 
 
         # For each billing cycle
         for cycle_start, cycle_end in self.billing_cycles:
             if cycle_start > power_series.index[-1] or cycle_end < power_series.index[0]:
                 continue
-
-            # Filter power series to this billing cycle
-            cycle_mask = (power_series.index >= cycle_start) & (power_series.index <= cycle_end)
-            cycle_power = power_series[cycle_mask]
-            
-            if len(cycle_power) == 0:
+            cycle_power = aligned_power_series.loc[cycle_start:cycle_end]
+            if cycle_power.empty:
                 continue
 
-            relevant_demand_charge_ts = self.demand_charge_categorical_dataframe.loc[cycle_mask]
+            relevant_demand_charge_ts = self.demand_charge_categorical_dataframe.loc[cycle_start:cycle_end, :]
             relevant_demand_charge_ts = relevant_demand_charge_ts.loc[:, (relevant_demand_charge_ts.sum() > 0).values]
             max_power_in_demand_period = relevant_demand_charge_ts.astype(int).mul(cycle_power,axis=0).max()
             period_demand_charges = max_power_in_demand_period * self.demand_charge_price_map
@@ -240,11 +250,12 @@ class TariffModel:
             Total energy charge in dollars
         """
         # Align power series with tariff timeseries
-        aligned_power = power_series.reindex(self.tariff_timeseries.index).ffill()
+        energy_series = power_to_energy(power_series)
+        aligned_energy_series = energy_series.resample(self.tariff_timeseries.index.freq, closed='left').sum()
         
         # Calculate energy charges
-        import_energy = aligned_power.clip(lower=0)  # Only positive (import) power
-        export_energy = (-aligned_power).clip(lower=0)  # Only negative (export) power as positive
+        import_energy = aligned_energy_series.clip(lower=0)  # Only positive (import) power
+        export_energy = (-aligned_energy_series).clip(lower=0)  # Only negative (export) power as positive
         
         # Calculate charges
         import_charges = (import_energy * self.tariff_timeseries['energy_import_rate_kwh']).sum()
@@ -252,7 +263,7 @@ class TariffModel:
         
         return import_charges - export_revenue
     
-    def compute_total_bill(self, power_series: pd.Series) -> Dict[str, float]:
+    def compute_total_bill(self, power_series: pd.Series) -> pd.Series:
         """
         Compute the total bill for a given power series.
         
@@ -266,11 +277,11 @@ class TariffModel:
         energy_charge = self.compute_energy_charge(power_series)
         total_bill = demand_charge + energy_charge
         
-        return {
+        return pd.Series({
             'demand_charge': demand_charge,
             'energy_charge': energy_charge,
             'total_bill': total_bill
-        }
+        })
     
     def compute_bill_series(self, power_series: pd.Series) -> pd.DataFrame:
         """
@@ -282,21 +293,15 @@ class TariffModel:
         Returns:
             DataFrame with columns: demand_charge, energy_charge, total_bill
         """
-        results = []
+        bill_series = {}
         
         for cycle_start, cycle_end in self.billing_cycles:
             # Filter power series to this billing cycle
-            cycle_mask = (power_series.index >= cycle_start) & (power_series.index <= cycle_end)
-            cycle_power = power_series[cycle_mask]
-            
-            if len(cycle_power) == 0:
+            cycle_power = power_series.loc[cycle_start:cycle_end]
+            if cycle_power.empty:
                 continue
-            
-            # Compute charges for this cycle
-            bill_data = self.compute_total_bill(cycle_power)
-            bill_data['cycle_start'] = cycle_start
-            bill_data['cycle_end'] = cycle_end
-            results.append(bill_data)
-        
-        return pd.DataFrame(results)
+
+            bill_series[cycle_start] = self.compute_total_bill(cycle_power)
+
+        return pd.DataFrame.from_dict(bill_series, orient='index')
 
