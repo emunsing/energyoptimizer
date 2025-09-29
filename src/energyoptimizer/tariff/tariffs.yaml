@@ -3,7 +3,7 @@ PGE_B_19_R:
   billing_data_granularity: 1h
   billing_cycle:
     name: month
-    ending: last_day_of_month
+    ending: first_day_of_month
   seasons:
     - name: summer
       months: [6, 7, 8, 9]  # June-September
@@ -24,7 +24,7 @@ PGE_B_19_R:
           off-peak: 0.21716
           anytime: null
         energy_export_rate_kwh:
-          default: null
+          anytime: null
         demand_charge_rate_kw:
           peak: 6.97
           partial-peak: 2.01
@@ -45,7 +45,7 @@ PGE_B_19_R:
           off-peak: 0.16189
           anytime: null
         energy_export_rate_kwh:
-          default: null
+          anytime: null
         demand_charge_rate_kw:
           anytime: 39.95
     - name: spring
@@ -67,6 +67,6 @@ PGE_B_19_R:
           super_off_peak: 0.12607
           anytime: null
         energy_export_rate_kwh:
-          default: null
+          anytime: null
         demand_charge_rate_kw:
           anytime: 39.95 

@@ -3,20 +3,36 @@ import enum
 
 class TariffModel:
     """
-    Tariffs have two components:
+    Tariffs have the following components:
     - Time-of-use energy import rate: Price per kWh imported from the grid (cost)
     - Time-of-use energy export rate: price per kWh exported to the grid (revenue)
-    - Demand charges: priced for the peak power which occurs during the billing cycle in the time-of-use tier. (cost)
+    - Billing cycle generator: Period generator for assessing demand charge and any flat billing fee
 
-    Demand charges:
-    - General approach: We need to compose the demand charge by computing the maximum power in a billing-cycle-defined period-tier (i.e. march-peak, march-partial_peak, march-anytime; april-peak, april-partial_peak,...).  This means we need both a mapping/Series/dict of demand charge rates for each billing period-tier, and a categorical dataframe that indicates which time periods are in which billing period-tier.
-    - Datetiminedex Categorical dataframe: Bool for each timeperiod if that timeindex is in the period-tier
-    - demand charge price map: $/kW for peak power during the period-tier
+    - Demand charges: General approach: We need to compose the demand charge by computing the maximum power in a billing-cycle-defined period-tier (i.e. march-peak, march-partial_peak, march-anytime; april-peak, april-partial_peak,...).  This means we need both a mapping/Series/dict of demand charge rates for each billing period-tier, and a categorical dataframe that indicates which time periods are in which billing period-tier.
+      -  Datetiminedex Categorical dataframe: Bool for each timeperiod if that timeindex is in the period-tier
+      - demand charge price map: $/kW for peak power during the period-tier
     """
+
 
     def compute_demand_charge(self, power_series: pd.Series) -> float:
         """Compute the demand charge for a given power series."""
         # SIGN CONVENTION: Positive meter power is import, negative is export
+        pass
+
+    def compute_energy_charge(self, power_series: pd.Series) -> float:
+        """Compute the energy charge for a given power series."""
+        pass
+
+    def compute_total_bill(self, power_series: pd.Series) -> pd.Series:
+        """Compute the total bill for a given power series.
+        Output should should have the fields: demand_charge, energy_charge, total_bill
+        """
+        pass
+
+    def compute_bill_series(self, power_series: pd.Series) -> pd.DataFrame:
+        """Compute the bill series for a given power series.
+        Output should should include columns: demand_charge, energy_charge, total_bill
+        """
         pass
 
 
