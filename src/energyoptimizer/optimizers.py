@@ -1,17 +1,61 @@
+import attrs
 import cvxpy as cp
 import pandas as pd
 import numpy as np
 import time
 
+# from .batteryopt_interface import TariffModel  # Commented out due to incomplete implementation
 
-def tou_optimization(site_data: pd.DataFrame,
-                     tariff: pd.DataFrame,
-                     batt_rt_eff=0.85,
-                     batt_e_max=13.5,
-                     batt_p_max=5,
-                     backup_reserve=0.2,
-                     import_kw_limit = 100,
-                     export_kw_limit=-100) -> pd.DataFrame:
+
+@attrs.define
+class OptimizationInputs:
+    """
+    Input: OptimizationRunnerInputs
+    Structured for optimizer: OptimizationInputs
+
+    """
+    site_data: pd.DataFrame  # Columns: solar, circuit_load, non_circuit_load
+    tariff_model: 'object'  # Any object with get_tariff_data method
+    batt_rt_eff: float = 0.85
+    batt_block_e_max: float = 13.5
+    batt_block_p_max: float = 5.0
+    backup_reserve: float = 0.2
+    circuit_import_kw_limit: float = 100.0
+    circuit_export_kw_limit: float = -100.0
+    site_import_kw_limit: float = 100.0
+    site_export_kw_limit: float = -100.0
+    # Endogenous sizing parameters
+    solar_annualized_cost_per_kw: float = 0.15  # 3.0 / 20
+    batt_annualized_cost_per_unit: float = 1000.0
+    integer_problem: bool = False
+
+
+@attrs.define
+class OptimizerOutputs:
+    """Standardized output format for all optimizers."""
+    results_df: pd.DataFrame
+    sizing_results: dict = attrs.field(factory=dict)
+
+    def get_results(self) -> pd.DataFrame:
+        """Get the optimization results DataFrame."""
+        return self.results_df
+
+    def get_sizing_results(self) -> dict:
+        """Get sizing results if available (for endogenous sizing optimizers)."""
+        return self.sizing_results
+
+
+def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
+    # Extract parameters from OptimizationInputs
+    site_data = opt_inputs.site_data
+    tariff = opt_inputs.tariff_model.get_tariff_data(site_data.index)
+    batt_rt_eff = opt_inputs.batt_rt_eff
+    batt_e_max = opt_inputs.batt_block_e_max
+    batt_p_max = opt_inputs.batt_block_p_max
+    backup_reserve = opt_inputs.backup_reserve
+    import_kw_limit = opt_inputs.circuit_import_kw_limit
+    export_kw_limit = opt_inputs.circuit_export_kw_limit
+    
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
     assert len(time_intervals) == 1, "Dataframes must have a constant-interval time index"
@@ -66,20 +110,23 @@ def tou_optimization(site_data: pd.DataFrame,
                                   'E': E[1:].value,
                                   'solar_post_curtailment': solar_post_curtailment.value
                                   }).set_index(site_data.index)
-    return res
+    return OptimizerOutputs(res)
 
-def self_consumption(site_data: pd.DataFrame,
-                        tariff: pd.DataFrame,
-                        batt_rt_eff=0.85,
-                        batt_e_max=13.5,
-                        batt_p_max=5,
-                        backup_reserve=0.2,
-                        import_kw_limit=100,
-                        export_kw_limit=-100) -> pd.DataFrame:
+def self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     """
     Simple self-consumption battery dispatch algorithm.
     Returns DataFrame with columns: P_batt, P_grid, E, solar_post_curtailment
     """
+    # Extract parameters from OptimizationInputs
+    site_data = opt_inputs.site_data
+    tariff = opt_inputs.tariff_model.get_tariff_data(site_data.index)
+    batt_rt_eff = opt_inputs.batt_rt_eff
+    batt_e_max = opt_inputs.batt_block_e_max
+    batt_p_max = opt_inputs.batt_block_p_max
+    backup_reserve = opt_inputs.backup_reserve
+    import_kw_limit = opt_inputs.circuit_import_kw_limit
+    export_kw_limit = opt_inputs.circuit_export_kw_limit
+    
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
     assert len(time_intervals) == 1, "Dataframes must have a constant-interval time index"
@@ -134,17 +181,19 @@ def self_consumption(site_data: pd.DataFrame,
                                   'E': E[1:],
                                   'solar_post_curtailment': solar_post_curtailment
                                   }).set_index(site_data.index)
-    return res
+    return OptimizerOutputs(res)
 
-def tou_endogenous_sizing_optimization(site_data: pd.DataFrame,
-                     tariff: pd.DataFrame,
-                     solar_annualized_cost_per_kw=3.0 / 20,
-                     batt_annualized_cost_per_unit=1000,
-                     batt_rt_eff=0.85,
-                     batt_block_e_max=13.5,
-                     batt_p_max=5,
-                                       integer_problem=False,
-                     ) -> tuple[float, float, pd.DataFrame]:
+def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
+    # Extract parameters from OptimizationInputs
+    site_data = opt_inputs.site_data
+    tariff = opt_inputs.tariff_model.get_tariff_data(site_data.index)
+    batt_rt_eff = opt_inputs.batt_rt_eff
+    batt_block_e_max = opt_inputs.batt_block_e_max
+    batt_p_max = opt_inputs.batt_block_p_max
+    solar_annualized_cost_per_kw = opt_inputs.solar_annualized_cost_per_kw
+    batt_annualized_cost_per_unit = opt_inputs.batt_annualized_cost_per_unit
+    integer_problem = opt_inputs.integer_problem
+    
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
 
     """Assumes that solar data in the site_data is per kW"""
@@ -202,4 +251,5 @@ def tou_endogenous_sizing_optimization(site_data: pd.DataFrame,
     res = pd.DataFrame.from_dict({'P_batt': P_batt_charge.value + P_batt_discharge.value,
                         'P_grid': P_grid_buy.value + P_grid_sell.value,
                         'E': E[1:].value}).set_index(site_data.index)
-    return n_batts.value, s_size_kw.value, res
+    sizing_results = {'n_batts': n_batts.value, 's_size_kw': s_size_kw.value}
+    return OptimizerOutputs(res, sizing_results)

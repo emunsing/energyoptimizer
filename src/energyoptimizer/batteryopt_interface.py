@@ -124,6 +124,8 @@ class DesignSpec:
     """
 
     def build_tariff(self) -> pd.DataFrame:
+        """Build the tariff from the design spec."""
+        pass
 
     def build_design_inputs(self) -> DesignInputs:  # TODO: forward reference
         """Build the design inputs from the design spec."""
@@ -176,30 +178,6 @@ class FinancialModelInputs:
     - Design cost
     - Reference upgrade cost without DER
     """
-
-class OptimizationRunnerInputs:
-    optimization_type # Enum choice:
-    optimization_clock # enum choice
-    optimization_start: pd.Timestamp
-    optimization_end: pd.Timestamp
-    parallelize: bool = True
-    design_inputs: DesignInputs
-    financial_model_inputs: FinancialModelInputs
-
-class OptimizationResults:
-    """
-    Dataframe with the following columns:
-    - solar_uncurtailed_kw
-    - solar_curtailed_kw
-    - battery_dispatch_kw
-    - battery_energy_kwh
-    - circuit_gross_load_kw
-    - circuit_net_load_kw
-    - non_circuit_gross_load_kw
-    - meter_power_kw
-    """
-
-
 
 class SummaryScalarStats:
     """Pydantic + Pandera class definitions

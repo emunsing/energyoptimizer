@@ -304,4 +304,36 @@ class TariffModel:
             bill_series[cycle_start] = self.compute_total_bill(cycle_power)
 
         return pd.DataFrame.from_dict(bill_series, orient='index')
+    
+    def get_tariff_data(self, index: pd.DatetimeIndex) -> pd.DataFrame:
+        """
+        Get tariff data for the given index.
+        
+        Args:
+            index: DatetimeIndex for which to get tariff data
+            
+        Returns:
+            DataFrame with columns: px_buy, px_sell (for optimizer compatibility)
+        """
+        # Convert the tariff timeseries index to match the requested timezone if needed
+        if index.tz is not None and self.tariff_timeseries.index.tz is None:
+            # Convert tariff data to the same timezone as the requested index
+            tariff_index = self.tariff_timeseries.index.tz_localize(index.tz)
+            tariff_data = self.tariff_timeseries.copy()
+            tariff_data.index = tariff_index
+        elif index.tz is None and self.tariff_timeseries.index.tz is not None:
+            # Convert tariff data to naive datetime
+            tariff_data = self.tariff_timeseries.copy()
+            tariff_data.index = tariff_data.index.tz_localize(None)
+        else:
+            tariff_data = self.tariff_timeseries
+        
+        # Get the tariff timeseries for the requested index
+        tariff_data = tariff_data.reindex(index, method='ffill')
+        
+        # Rename columns to match optimizer expectations
+        return pd.DataFrame({
+            'px_buy': tariff_data['energy_import_rate_kwh'],
+            'px_sell': tariff_data['energy_export_rate_kwh']
+        }, index=index)
 
