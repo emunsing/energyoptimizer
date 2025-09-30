@@ -49,7 +49,7 @@ class TariffModel:
     energy charges, demand charges, and total bills for given power series.
     """
     
-    def __init__(self, tariff_file: str, rate_code: str, start_date: date, end_date: date):
+    def __init__(self, tariff_file: str, rate_code: str, start_date: date, end_date: date, rate_escalator: float = 0.0):
         """
         Initialize the TariffModel with tariff configuration and date range.
         
@@ -157,6 +157,16 @@ class TariffModel:
         self.season_period_import_rates = pd.Series(season_period_import_rates).fillna(0)
         self.season_period_export_rates = pd.Series(season_period_export_rates).fillna(0)
         self.season_period_demand_rates = pd.Series(season_period_demand_rates).fillna(0)
+
+        years = sorted(self.time_index.year.unique())
+
+        for i, y in enumerate(years):
+            escalator_factor = (1 + self.rate_escalator) ** i
+            year_mask = self.time_index.year == y
+            self.season_period_import_rates.loc[year_mask] *= escalator_factor
+            self.season_period_export_rates.loc[year_mask] *= escalator_factor
+            self.season_period_demand_rates.loc[year_mask] *= escalator_factor
+            
     
     def _build_demand_charge_categorical_dataframe_and_price_map(self):
         """Build categorical dataframe indicating which periods are subject to demand charges."""
