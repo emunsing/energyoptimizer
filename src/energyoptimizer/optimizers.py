@@ -110,7 +110,7 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                                   'E': E[1:].value,
                                   'solar_post_curtailment': solar_post_curtailment.value
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(res)
+    return OptimizerOutputs(results_df=res)
 
 def self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     """
@@ -181,7 +181,7 @@ def self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                                   'E': E[1:],
                                   'solar_post_curtailment': solar_post_curtailment
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(res)
+    return OptimizerOutputs(results_df=res)
 
 def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     # Extract parameters from OptimizationInputs
@@ -215,6 +215,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     P_batt_discharge = cp.Variable(n)
     P_grid_buy = cp.Variable(n)
     P_grid_sell = cp.Variable(n)
+    solar_post_curtailment = cp.Variable(n, nonneg=True)
     E = cp.Variable(n+1)
 
     # Power flows are all AC, and are signed relative to the bus: injections to the bus are positive, withdrawals/exports from the bus are negative
@@ -231,8 +232,10 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                    P_grid_sell <= 0,
                    e_min <= E,
                    E <= batt_e_max,
+                   solar_post_curtailment >= 0,
+                   solar_post_curtailment <= site_data['solar'] * s_size_kw,
                    E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
-                   P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['load'] + s_size_kw * site_data['solar'] == 0,
+                   P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['load'] + solar_post_curtailment == 0,
                    E[0] == E_0
                    ]
 
@@ -250,6 +253,8 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
 
     res = pd.DataFrame.from_dict({'P_batt': P_batt_charge.value + P_batt_discharge.value,
                         'P_grid': P_grid_buy.value + P_grid_sell.value,
-                        'E': E[1:].value}).set_index(site_data.index)
+                        'E': E[1:].value,
+                        'solar_post_curtailment': solar_post_curtailment,
+                              }).set_index(site_data.index,)
     sizing_results = {'n_batts': n_batts.value, 's_size_kw': s_size_kw.value}
-    return OptimizerOutputs(res, sizing_results)
+    return OptimizerOutputs(results_df=res, sizing_results=sizing_results)

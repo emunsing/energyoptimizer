@@ -63,9 +63,7 @@ class OptimizationRunnerInputs:
     optimization_end: pd.Timestamp
     design_inputs: 'DesignInputs'
     financial_model_inputs: 'FinancialModelInputs'
-    optimization_frequency: str = '1D'
-    optimization_horizon: Optional[pd.DateOffset] = None
-    optimization_lookback: Optional[pd.DateOffset] = None
+    optimization_clock: Optional[OptimizationClock] = None
     parallelize: bool = True
 
 
@@ -95,12 +93,8 @@ class OptimizationRunner:
             OptimizerOutputs containing the optimization results
         """
         # Create optimization clock if needed
-        if self.inputs.optimization_frequency and self.inputs.optimization_horizon and self.inputs.optimization_lookback:
-            clock = OptimizationClock(
-                frequency=self.inputs.optimization_frequency,
-                horizon=self.inputs.optimization_horizon,
-                lookback=self.inputs.optimization_lookback
-            )
+        if self.inputs.optimization_clock:
+            clock = self.inputs.optimization_clock
             intervals = clock.get_intervals(self.inputs.optimization_start, self.inputs.optimization_end)
         else:
             # Single optimization window
