@@ -3,6 +3,8 @@ import pandas as pd
 import enum
 from typing import Optional, Union
 from .tariff.tariff_utils import TariffModel
+from dateutil.relativedelta import relativedelta
+from .batteryopt_utils import shift_copy_dataset_to_new_index
 
 @attrs.define
 class DesignInputs:
@@ -138,20 +140,29 @@ class DesignSpec:
         """Build the solar timeseries from the design spec."""
         if self.solar_data_source == "upload" and self.solar_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            solar_series = self.solar_data.iloc[:, 0]  # Get first column as Series
-            result = solar_series.reindex(time_index, method='nearest')
-            result.name = 'solar'
-            return result
-        
-        elif self.solar_data_source == "year1" and self.solar_data is not None:
-            # Apply degradation to year 1 data
-            years = (time_index.year - time_index.year.min())
-            degradation = self.solar_first_year_degradation * (years == 0) + \
-                         self.solar_subsequent_year_degradation * (years > 0)
-            solar_series = self.solar_data.iloc[:, 0]  # Get first column as Series
-            degraded_data = solar_series.reindex(time_index, method='nearest')
-            result = degraded_data * (1 - degradation.cumsum())
-            result.name = 'solar'
+            solar_series = self.solar_data.loc['solar']
+            if solar_series.index[0] <= time_index[0] and solar_series.index[-1] >= time_index[-1]:
+                # Supplied series is fully covers the study
+                solar_series = solar_series.loc[time_index[0]:time_index[-1]]
+                result = solar_series.reindex(time_index, method='nearest')
+            else:
+                solar_series = shift_copy_dataset_to_new_index(input_dataset=solar_series,
+                                                               new_time_index=time_index,)
+
+                # Model solar panel decay for years not covered by the supplied dataset
+                input_series_duration_years = relativedelta(solar_series.index[-1] + solar_series.index.freq, solar_series.index[0]).years
+                experiment_duration_years = relativedelta(time_index[-1] + time_index.freq, time_index[0]).years
+
+                # Linear solar panel decay after the initial decay
+                solar_decay_multipliers = [1.0] + [1.0 - self.solar_first_year_degradation - self.solar_subsequent_year_degradation * i for i in
+                 range(experiment_duration_years - 1)]
+
+                for yr in range(input_series_duration_years, experiment_duration_years):
+                    yr_start = solar_series.index[0] + relativedelta(years=yr)
+                    yr_end = solar_series.index[0] + relativedelta(years=yr+1) - pd.DateOffset(minutes=1)
+                    multiplier = solar_decay_multipliers[yr]
+                    solar_series.loc[yr_start:yr_end] *= multiplier
+                result = solar_series
             return result
         
         else:
@@ -162,10 +173,11 @@ class DesignSpec:
         """Build the circuit load timeseries from the design spec."""
         if self.circuit_load_data_source == "upload" and self.circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.circuit_load_data.iloc[:, 0]  # Get first column as Series
-            result = load_series.reindex(time_index, method='nearest')
-            result.name = 'circuit_load'
-            return result
+            load_series = self.circuit_load_data['load']
+
+            reindexed_load_series = shift_copy_dataset_to_new_index(input_dataset=load_series,
+                                                                    new_time_index=time_index,)
+            return reindexed_load_series
         
         else:
             # Default: return zeros if no data provided
@@ -175,8 +187,11 @@ class DesignSpec:
         """Build the non-circuit load timeseries from the design spec."""
         if self.non_circuit_load_data_source == "upload" and self.non_circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.non_circuit_load_data.iloc[:, 0]  # Get first column as Series
-            result = load_series.reindex(time_index, method='nearest')
+            load_series = self.non_circuit_load_data.loc['site_load']  # Get first column as Series
+            # TODO: This needs to be fixed; we need to copy/shift the year-1 data to subsequent years
+            result = shift_copy_dataset_to_new_index(input_dataset=load_series,
+                                                     new_time_index=time_index,
+                                                     )
             result.name = 'non_circuit_load'
             return result
         
