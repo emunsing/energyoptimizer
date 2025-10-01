@@ -9,9 +9,9 @@ def check_datetimeindex_regular(input_dataset: pd.DataFrame | pd.Series | pd.Dat
         input_dataset = input_dataset.index
 
     # TODO: Is .freq a strong check that there are no missing timestamps?
-    assert isinstance(input_dataset.index, pd.DatetimeIndex)
-    assert input_dataset.index.freq is not None, "Input dataset must have a fixed frequency"
-    assert input_dataset.index.tz is not None
+    assert isinstance(input_dataset, pd.DatetimeIndex)
+    assert input_dataset.freq is not None, "Input dataset must have a fixed frequency"
+    assert input_dataset.tz is not None
 
 
 def create_time_columns(input_df: pd.DataFrame) -> pd.DataFrame:
@@ -22,6 +22,7 @@ def create_time_columns(input_df: pd.DataFrame) -> pd.DataFrame:
     input_df['isoweek'] = input_df.index.isocalendar().week
     input_df['hour'] = input_df.index.hour
     input_df['minute'] = input_df.index.minute
+    input_df['utcoffset'] = input_df.index.map(lambda x: x.utcoffset())
     return input_df
 
 
@@ -34,6 +35,15 @@ def shift_copy_dataset_to_new_index(input_dataset: pd.DataFrame | pd.Series,
     """
     Shift and copy a dataset to a new time index, preserving autoregressive integrity as much as possible (with exception of the boundaries between years and filling NaNs)
     This will be primarily used for extending historical data to model future performance (e.g. extending 2022 electricity meter data to model 2025-2035 performance)
+
+    NOTE: This is a hard problem! Ideally would need a calendar of holidays mapped to names, so that
+    e.g. Christmas is always appropriately observed with an energy usage spike.
+
+    Currently we merge on ['year_number', 'isoweek', 'weekday', 'hour', 'minute', 'utcoffset'] but this means that the
+    week numbers can shift as the year's start- and end-dates shift.  We fill blanks using the average of the
+    ['year_number', 'month', 'weekday', 'hour', 'minute'] which means that we may fill with disjoint information.
+
+    A better imputation approach may be to use a timeseries model for imputation.
 
     Gotchas:
     - Leap-years
@@ -51,7 +61,7 @@ def shift_copy_dataset_to_new_index(input_dataset: pd.DataFrame | pd.Series,
     assert input_dataset_full_years >= 1, "Input dataset must span more than one year"
 
     working_data = input_dataset.copy()
-    working_data = working_data.resample(new_time_index.index.freq).agg(resample_method)
+    working_data = working_data.resample(new_time_index.freq).agg(resample_method)
     working_data = working_data.ffill(limit=1)
     ending_time_right_bounded = working_data.index[-1] + working_data.index.freq
 
@@ -101,15 +111,14 @@ def shift_copy_dataset_to_new_index(input_dataset: pd.DataFrame | pd.Series,
                 reference_year = yr % input_dataset_full_years
         target_index_df.loc[yr_start:yr_end, 'year_number'] = reference_year
 
-    target_index_df_merged = target_index_df.merge(working_data.drop('month', axis=1), how='left', on=['isoweek', 'weekday', 'hour', 'minute', 'year_number'])
+    # THE MERGE CRITERIA ARE BESPOKE, AND ARE NOT ANALYTICALLY OPTIMAL
+    target_index_df_merged = target_index_df.merge(working_data.drop('month', axis=1), how='left', on=[ 'year_number', 'isoweek', 'weekday', 'hour', 'minute', 'utcoffset'])
     target_index_df_merged.index = target_index_df.index
-    target_index_filled = target_index_df_merged.groupby(['weekday', 'isoweek', 'hour', 'minute', 'year_number'] + input_columns).value.ffill()
-    
-    target_index_filled = target_index_filled.groupby(['year_number','month', 'weekday', 'hour', 'minute', 'year_number']).ffill()
+    target_index_filled = target_index_df_merged.groupby(['year_number', 'month', 'weekday', 'hour', 'minute']).ffill()
     target_index_filled = target_index_filled.ffill(limit=1).bfill(limit=1)
-    output_data = target_index_filled.loc[input_columns]
+    output_data = target_index_filled[input_columns]
 
-    if output_data.shape[0] == 1:
+    if output_data.shape[1] == 1:
         output_data = output_data.squeeze()
 
     return output_data
