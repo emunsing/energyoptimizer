@@ -112,9 +112,17 @@ def shift_copy_dataset_to_new_index(input_dataset: pd.DataFrame | pd.Series,
         target_index_df.loc[yr_start:yr_end, 'year_number'] = reference_year
 
     # THE MERGE CRITERIA ARE BESPOKE, AND ARE NOT ANALYTICALLY OPTIMAL
-    target_index_df_merged = target_index_df.merge(working_data.drop('month', axis=1), how='left', on=[ 'year_number', 'isoweek', 'weekday', 'hour', 'minute', 'utcoffset'])
+    merge_columns = ['year_number', 'isoweek', 'weekday', 'hour', 'minute', 'utcoffset']
+    duplicate_mask = working_data[merge_columns].duplicated(keep='first')  # "First" marks the first occurrence False & subsequent occurrences True
+    working_data = working_data[~duplicate_mask]  # Drop duplicates which would cause the merge to expand the dataset
+    target_index_df_merged = target_index_df.merge(working_data.drop('month', axis=1), how='left', on=merge_columns)
     target_index_df_merged.index = target_index_df.index
-    target_index_filled = target_index_df_merged.groupby(['year_number', 'month', 'weekday', 'hour', 'minute']).ffill()
+
+    # The below ffill/bfill is intended to fill the gaps caused by week-number shifts, leap years, and DST shifts
+    group_columns = ['year_number', 'month', 'weekday', 'hour', 'minute']
+    target_index_filled = target_index_df_merged.groupby(group_columns).ffill()
+    target_index_filled[group_columns] = target_index_df_merged[group_columns]
+    target_index_filled = target_index_filled.groupby(group_columns).bfill()
     target_index_filled = target_index_filled.ffill(limit=1).bfill(limit=1)
     output_data = target_index_filled[input_columns]
 
