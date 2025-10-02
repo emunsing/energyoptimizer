@@ -19,6 +19,7 @@ def create_time_columns(input_df: pd.DataFrame) -> pd.DataFrame:
         input_df = input_df.to_frame()
     input_df['weekday'] = input_df.index.weekday
     input_df['month'] = input_df.index.month
+    input_df['monthday'] = input_df.index.day
     input_df['isoweek'] = input_df.index.isocalendar().week
     input_df['hour'] = input_df.index.hour
     input_df['minute'] = input_df.index.minute

@@ -60,6 +60,8 @@ class TariffModel:
         """
         self.start_date = pd.Timestamp(start_date)
         self.end_date = pd.Timestamp(end_date)
+        self.years = range(self.start_date.year, self.end_date.year + 1)
+        self.rate_escalator = rate_escalator
         
         # Load tariff configuration
         if os.path.isabs(tariff_file):
@@ -97,18 +99,36 @@ class TariffModel:
         self._build_billing_cycles()
         self._build_demand_charge_categorical_dataframe_and_price_map()
 
+    def _build_rate_series_from_annual_rates(self, mask: pd.DataFrame, rates: pd.DataFrame) -> pd.Series:
+        full_rate_series = []
+        for y in self.years:
+            yearly_mask = mask.loc[mask.index.year == y]
+            yearly_rates = rates[y]
+            yearly_rate_series = yearly_mask.mul(yearly_rates)
+            full_rate_series.append(yearly_rate_series)
+        full_period_rates = pd.concat(full_rate_series)
+        return full_period_rates.sum(axis=1)
+
     def _build_tariff_timeseries(self):
         """Build the tariff timeseries with energy rates and demand charges."""
-        import_tariff = self.season_period_import_rates.mul(self.season_period_masks).sum(axis=1)
-        export_tariff = self.season_period_export_rates.mul(self.season_period_masks).sum(axis=1)
-        demand_charge = self.season_period_demand_rates.mul(self.season_period_masks).sum(axis=1)
 
+        import_tariff = self._build_rate_series_from_annual_rates(self.season_period_masks,
+                                                                  self.season_period_import_rates)
+        export_tariff = self._build_rate_series_from_annual_rates(self.season_period_masks,
+                                                                  self.season_period_export_rates)
+        demand_charge = self._build_rate_series_from_annual_rates(self.season_period_masks,
+                                                                  self.season_period_demand_rates)
         self.tariff_timeseries = pd.DataFrame({
             'energy_import_rate_kwh': import_tariff,
             'energy_export_rate_kwh': export_tariff,
             'demand_charge_rate_kw': demand_charge
         })
-    
+
+    @staticmethod
+    def _series_outer_product(s1: pd.Series, s2: pd.Series) -> pd.DataFrame:
+        """Compute the outer product of two series, resulting in a DataFrame."""
+        return pd.DataFrame({i: s1 * v for i, v in s2.items()})
+
     def _build_season_period_masks(self):
         """Build season-period masks that span the entire time period."""
         season_period_masks = {}
@@ -151,21 +171,21 @@ class TariffModel:
                 season_period_import_rates[season_period_key] = seasonal_rates['energy_import_rate_kwh'].get(period_name, seasonal_rates['energy_import_rate_kwh'].get('default', 0))
                 season_period_export_rates[season_period_key] = seasonal_rates['energy_export_rate_kwh'].get(period_name, seasonal_rates['energy_export_rate_kwh'].get('default', 0))
                 season_period_demand_rates[season_period_key] = seasonal_rates['demand_charge_rate_kw'].get(period_name, seasonal_rates['demand_charge_rate_kw'].get('default', 0))
-        
-        # Save as class attribute
-        self.season_period_masks = pd.DataFrame(season_period_masks)    
-        self.season_period_import_rates = pd.Series(season_period_import_rates).fillna(0)
-        self.season_period_export_rates = pd.Series(season_period_export_rates).fillna(0)
-        self.season_period_demand_rates = pd.Series(season_period_demand_rates).fillna(0)
 
-        years = sorted(self.time_index.year.unique())
+        self.season_period_masks = pd.DataFrame(season_period_masks)
 
-        for i, y in enumerate(years):
-            escalator_factor = (1 + self.rate_escalator) ** i
-            year_mask = self.time_index.year == y
-            self.season_period_import_rates.loc[year_mask] *= escalator_factor
-            self.season_period_export_rates.loc[year_mask] *= escalator_factor
-            self.season_period_demand_rates.loc[year_mask] *= escalator_factor
+        # Apply rate escalator over the years
+        escalators = [(1 + self.rate_escalator) ** i for i in range(len(self.years))]
+        escalator_series = pd.Series(escalators, index=self.years)
+
+        import_rates = pd.Series(season_period_import_rates).fillna(0)
+        self.season_period_import_rates = self._series_outer_product(import_rates, escalator_series)
+
+        export_rates = pd.Series(season_period_export_rates).fillna(0)
+        self.season_period_export_rates = self._series_outer_product(export_rates, escalator_series)
+
+        demand_rates = pd.Series(season_period_demand_rates).fillna(0)
+        self.season_period_demand_rates = self._series_outer_product(demand_rates, escalator_series)
             
     
     def _build_demand_charge_categorical_dataframe_and_price_map(self):
@@ -196,7 +216,7 @@ class TariffModel:
                 df[col_name] = False
                 df.loc[billing_cycle_mask, col_name] = True
 
-                rate = self.season_period_demand_rates[season_period_key]
+                rate = self.season_period_demand_rates.loc[season_period_key, year]
                 demand_charge_price_map[col_name] = rate
         
         self.demand_charge_categorical_dataframe = df

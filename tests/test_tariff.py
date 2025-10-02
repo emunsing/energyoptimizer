@@ -5,14 +5,21 @@ import hashlib
 import json
 from datetime import date, datetime
 from src.energyoptimizer.tariff.tariff_utils import TariffModel
+from src.energyoptimizer.batteryopt_utils import create_time_columns
 
 RATE_CODES = ['PGE_B_19_R']
 
+START_DATE, END_DATE = date(2024, 1, 1), date(2024, 1, 31)
+
 class TestTariffModel:
     """Test suite for the TariffModel class."""
+    start_date = date(2024, 1, 1)
+    end_date = date(2034, 12, 31)
+    rate_escalator = 0.03
 
     def test_tariff_version(self):
-        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', '2024-01-01', '2024-01-31')
+        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', self.start_date, self.end_date,
+                                   rate_escalator=self.rate_escalator)
 
         ref_tariff_config_hash = '0de650a1274a5f534bb27efe1fdf1701'  # 9/29/2025
         tariff_config_hash =hashlib.md5(json.dumps(tariff_model.tariff, sort_keys=True).encode()).hexdigest()
@@ -21,10 +28,8 @@ class TestTariffModel:
 
     def test_tariff_model_initialization(self):
         """Test TariffModel initialization with basic parameters."""
-        start_date = date(2024, 1, 1)
-        end_date = date(2024, 1, 31)
         
-        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date)
+        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', self.start_date, self.end_date)
         
         # Test that tariff components are built
         assert hasattr(tariff_model, 'tariff_timeseries')
@@ -67,7 +72,7 @@ class TestTariffModel:
         start_date = date(2024, 1, 1)
         end_date = date(2024, 1, 31)
 
-        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date)
+        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', self.start_date, self.end_date)
         price_map = tariff_model.demand_charge_price_map
         
         # Should have entries for each billing cycle-period combination
@@ -106,13 +111,10 @@ class TestTariffModel:
     
     def test_compute_energy_charge_export(self):
         """Test energy charge computation with export."""
-        start_date = date(2024, 1, 1)
-        end_date = date(2024, 1, 2)
-        
-        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date)
+        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', self.start_date, self.end_date)
         
         # Create a power series with export (negative values)
-        time_index = pd.date_range(start_date, end_date, freq='15min', inclusive='left')
+        time_index = pd.date_range(self.start_date, self.end_date, freq='15min', inclusive='left')
         power_series = pd.Series(-5.0, index=time_index)  # 5 kW constant export
         
         energy_charge = tariff_model.compute_energy_charge(power_series)
@@ -122,13 +124,10 @@ class TestTariffModel:
 
     def test_mixed_import_export(self):
         """Test with mixed import and export power."""
-        start_date = date(2024, 1, 1)
-        end_date = date(2024, 1, 2)
-
-        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date)
+        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', self.start_date, self.end_date)
 
         # Create power series with both import and export
-        time_index = pd.date_range(start_date, end_date, freq='15min', inclusive='left')
+        time_index = pd.date_range(self.start_date, self.end_date, freq='15min', inclusive='left')
         power_series = pd.Series(0.0, index=time_index)
 
         # Import during day, export during night
@@ -243,8 +242,6 @@ class TestTariffModel:
         start_date = date(2024, 5, 15)  # Mid-January
         end_date = date(2024, 7, 15)    # Mid-March
 
-        days_in_month = [31, 30, 31]  # May, June, July
-
         tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date)
         
         # Create power series spanning multiple months
@@ -262,3 +259,53 @@ class TestTariffModel:
         assert np.all(np.isclose(bill_series.values, ref_series_values, atol=1e-4)), "Bill series values do not match reference"
         bill_total = tariff_model.compute_total_bill(power_series)
         assert np.isclose(bill_total['total_bill'], bill_series['total_bill'].sum(), atol=1e-4), "Total bill does not match reference"
+
+    def test_billing_cycle_over_years(self):
+        tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', self.start_date, self.end_date, rate_escalator=self.rate_escalator)
+        power_level = 10
+        time_index = pd.date_range(self.start_date, self.end_date, freq='15min', inclusive='left')
+        power_series = pd.Series(power_level, index=time_index)  # 25 kW constant import
+
+        start_year = tariff_model.years[0]
+        end_year = tariff_model.years[-1]
+        year_range = range(start_year, end_year + 1)
+
+        for table_name in ['season_period_import_rates', 'season_period_export_rates', 'season_period_demand_rates']:
+            rate_table = getattr(tariff_model, table_name)
+            assert sorted(rate_table.columns) == sorted(year_range)
+            assert np.all(np.isclose(rate_table[end_year], rate_table[start_year] * ((1 + self.rate_escalator) ** (end_year - start_year))))
+
+        tariff_timeseries = tariff_model.tariff_timeseries
+        data_columns = tariff_timeseries.columns
+        start_year_tariff_timeseries = tariff_timeseries[tariff_timeseries.index.year == start_year]
+        end_year_tariff_timeseries = tariff_timeseries[tariff_timeseries.index.year == end_year]
+
+        start_year_tariff_timeindexed = create_time_columns(start_year_tariff_timeseries)
+        end_year_tariff_timeindexed = create_time_columns(end_year_tariff_timeseries)
+
+        index_on = ['month', 'weekday', 'hour', 'minute']
+        start_year_tariff_timeindexed = start_year_tariff_timeindexed.set_index(index_on, append=False)[data_columns]
+        end_year_tariff_timeindexed = end_year_tariff_timeindexed.set_index(index_on, append=False)[data_columns]
+
+        common_idx = start_year_tariff_timeindexed.index.intersection(end_year_tariff_timeindexed.index)
+
+        start_year_tariff_timeindexed = start_year_tariff_timeindexed.loc[common_idx]
+        end_year_tariff_timeindexed = end_year_tariff_timeindexed.loc[common_idx]
+
+        # Because we're doing by weekday in the index_on, we will have different numbers of entries between the two years
+        start_year_tariff_timeindexed = start_year_tariff_timeindexed.groupby(level=index_on).first()
+        end_year_tariff_timeindexed = end_year_tariff_timeindexed.groupby(level=index_on).first()
+
+        start_year_tariff_timeindexed_inflated = start_year_tariff_timeindexed * ((1 + self.rate_escalator) ** (end_year - start_year))
+
+        assert np.all(np.isclose(end_year_tariff_timeindexed, start_year_tariff_timeindexed_inflated, atol=1e-2))
+
+        bill_series = tariff_model.compute_bill_series(power_series)
+        annual_bills = bill_series.resample('1Y').sum()
+
+        annual_bill_relative_change = annual_bills.diff() / annual_bills.shift()
+        annual_bill_relative_change = annual_bill_relative_change.dropna()
+
+        assert np.all(np.isclose(annual_bill_relative_change, self.rate_escalator, atol=1e-2))
+
+        print("done")
