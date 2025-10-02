@@ -140,18 +140,19 @@ class DesignSpec:
         """Build the solar timeseries from the design spec."""
         if self.solar_data_source == "upload" and self.solar_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            solar_series = self.solar_data.loc['solar']
+            solar_series = self.solar_data['solar']
             if solar_series.index[0] <= time_index[0] and solar_series.index[-1] >= time_index[-1]:
                 # Supplied series is fully covers the study
                 solar_series = solar_series.loc[time_index[0]:time_index[-1]]
                 result = solar_series.reindex(time_index, method='nearest')
             else:
+                # Model solar panel decay for years not covered by the supplied dataset
+                experiment_duration_years = relativedelta(time_index[-1] + time_index.freq, time_index[0]).years
+                input_series_duration_years = relativedelta(solar_series.index[-1] + solar_series.index.freq, solar_series.index[0]).years
+
                 solar_series = shift_copy_dataset_to_new_index(input_dataset=solar_series,
                                                                new_time_index=time_index,)
 
-                # Model solar panel decay for years not covered by the supplied dataset
-                input_series_duration_years = relativedelta(solar_series.index[-1] + solar_series.index.freq, solar_series.index[0]).years
-                experiment_duration_years = relativedelta(time_index[-1] + time_index.freq, time_index[0]).years
 
                 # Linear solar panel decay after the initial decay
                 solar_decay_multipliers = [1.0] + [1.0 - self.solar_first_year_degradation - self.solar_subsequent_year_degradation * i for i in
@@ -173,7 +174,7 @@ class DesignSpec:
         """Build the circuit load timeseries from the design spec."""
         if self.circuit_load_data_source == "upload" and self.circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.circuit_load_data['load']
+            load_series = self.circuit_load_data['solar_panel_load']
 
             reindexed_load_series = shift_copy_dataset_to_new_index(input_dataset=load_series,
                                                                     new_time_index=time_index,)
@@ -187,23 +188,23 @@ class DesignSpec:
         """Build the non-circuit load timeseries from the design spec."""
         if self.non_circuit_load_data_source == "upload" and self.non_circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.non_circuit_load_data.loc['site_load']  # Get first column as Series
+            load_series = self.non_circuit_load_data['main_panel_load']  # Get first column as Series
             # TODO: This needs to be fixed; we need to copy/shift the year-1 data to subsequent years
             result = shift_copy_dataset_to_new_index(input_dataset=load_series,
                                                      new_time_index=time_index,
                                                      )
-            result.name = 'non_circuit_load'
+            result.name = 'main_panel_load'
             return result
         
         elif self.non_circuit_load_data_source == "flat" and self.facility_sqft is not None and self.annual_eui is not None:
             # Generate flat load profile
             annual_energy = self.facility_sqft * self.annual_eui
             hourly_energy = annual_energy / 8760  # kWh/hr
-            return pd.Series(hourly_energy, index=time_index, name='non_circuit_load')
+            return pd.Series(hourly_energy, index=time_index, name='main_panel_load')
         
         else:
             # Default: return zeros if no data provided
-            return pd.Series(0.0, index=time_index, name='non_circuit_load')
+            return pd.Series(0.0, index=time_index, name='main_panel_load')
 
 
 @attrs.define

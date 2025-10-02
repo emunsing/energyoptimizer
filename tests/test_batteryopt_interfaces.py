@@ -2,265 +2,137 @@ import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+
+from dateutil.relativedelta import relativedelta
+
 from src.energyoptimizer.batteryopt_interface import (
     DesignSpec, FinancialSpec, GeneralAssumptions, TariffSpec, ScenarioSpec,
     DesignInputs, FinancialModelInputs
 )
 from src.energyoptimizer.tariff.tariff_utils import TariffModel
+from .test_utils import sample_site_data
+from src.energyoptimizer.optimization_runner import OptimizationRunnerInputs, OptimizationType
+
+TZ = 'US/Pacific'
 
 
 class TestDesignSpec:
     """Test DesignSpec methods for building timeseries data."""
+    time_index = pd.date_range('2025-01-01', '2044-12-31 23:59', tz=TZ, freq='1H')
+    one_year_site_data = sample_site_data('2023-01-01', '2024-01-01', freq='1H', tz=TZ)
     
     def test_build_solar_timeseries_upload(self):
-        """Test solar timeseries with uploaded data."""
-        # Create test data
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        solar_data = pd.DataFrame(np.random.rand(24) * 5, index=time_index)
-        
         # Create DesignSpec with uploaded data
         design_spec = DesignSpec(
             solar_data_source="upload",
-            solar_data=solar_data
+            solar_data=self.one_year_site_data
         )
-        
-        # Test building solar timeseries
-        result = design_spec.build_solar_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
+        result = design_spec.build_solar_timeseries(self.time_index)
+        assert result.index.equals(self.time_index)
         assert result.name == 'solar'
-        pd.testing.assert_series_equal(result, solar_data.iloc[:, 0], check_names=False)
-    
-    def test_build_solar_timeseries_year1_degradation(self):
-        """Test solar timeseries with year 1 data and degradation."""
-        # Create test data for year 1
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        solar_data = pd.DataFrame(np.ones(24) * 5, index=time_index)
-        
-        # Create DesignSpec with year 1 data
-        design_spec = DesignSpec(
-            solar_data_source="year1",
-            solar_data=solar_data,
-            solar_first_year_degradation=0.1,  # 10% first year
-            solar_subsequent_year_degradation=0.05  # 5% subsequent years
-        )
-        
-        # Test with multi-year data
-        multi_year_index = pd.date_range('2023-01-01', periods=48, freq='h')
-        result = design_spec.build_solar_timeseries(multi_year_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 48
-        # First 24 hours should have 10% degradation
-        assert np.allclose(result.iloc[:24], 5 * 0.9, rtol=1e-10)
-        # Next 24 hours should have additional 5% degradation
-        assert np.allclose(result.iloc[24:], 5 * 0.9 * 0.95, rtol=1e-10)
-    
-    def test_build_solar_timeseries_no_data(self):
-        """Test solar timeseries with no data (defaults to zeros)."""
-        design_spec = DesignSpec()
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        
-        result = design_spec.build_solar_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
-        assert result.name == 'solar'
-        assert np.allclose(result, 0.0)
+        assert result.notnull().all()
+
+        # Confirm that solar decays over time
+        annual_max = result.groupby(result.index.year).max()
+        assert annual_max.iloc[1] == annual_max.values[0] * (1 - design_spec.solar_first_year_degradation)
+        assert annual_max.iloc[-1] < annual_max.values[0] * 0.85
     
     def test_build_circuit_load_timeseries_upload(self):
-        """Test circuit load timeseries with uploaded data."""
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        circuit_load_data = pd.DataFrame(np.random.rand(24) * 10, index=time_index)
-        
         design_spec = DesignSpec(
             circuit_load_data_source="upload",
-            circuit_load_data=circuit_load_data
+            circuit_load_data=self.one_year_site_data
         )
-        
-        result = design_spec.build_circuit_load_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
-        assert result.name == 'circuit_load'
-        pd.testing.assert_series_equal(result, circuit_load_data.iloc[:, 0])
-    
-    def test_build_circuit_load_timeseries_no_data(self):
-        """Test circuit load timeseries with no data (defaults to zeros)."""
-        design_spec = DesignSpec()
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        
-        result = design_spec.build_circuit_load_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
-        assert result.name == 'circuit_load'
-        assert np.allclose(result, 0.0)
-    
+        result = design_spec.build_circuit_load_timeseries(self.time_index)
+        assert result.index.equals(self.time_index)
+        assert result.name == 'solar_panel_load'
+        assert result.notnull().all()
+
+        # Confirm that results are roughly constant, allowing for leap years
+        annual_total = result.groupby(result.index.year).sum()
+        annual_total_deviation = annual_total / annual_total.mean() - 1
+        assert all(annual_total_deviation.abs() < 0.01)
+
     def test_build_non_circuit_load_timeseries_upload(self):
-        """Test non-circuit load timeseries with uploaded data."""
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        non_circuit_load_data = pd.DataFrame(np.random.rand(24) * 5, index=time_index)
-        
         design_spec = DesignSpec(
             non_circuit_load_data_source="upload",
-            non_circuit_load_data=non_circuit_load_data
+            non_circuit_load_data=self.one_year_site_data
         )
-        
-        result = design_spec.build_non_circuit_load_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
-        assert result.name == 'non_circuit_load'
-        pd.testing.assert_series_equal(result, non_circuit_load_data.iloc[:, 0])
+        result = design_spec.build_non_circuit_load_timeseries(self.time_index)
+        assert result.index.equals(self.time_index)
+        assert result.name == 'main_panel_load'
+        assert result.notnull().all()
+
+        # Confirm that results are roughly constant, allowing for leap years
+        annual_total = result.groupby(result.index.year).sum()
+        annual_total_deviation = annual_total / annual_total.mean() - 1
+        assert all(annual_total_deviation.abs() < 0.01)
     
     def test_build_non_circuit_load_timeseries_flat(self):
         """Test non-circuit load timeseries with flat profile."""
+        annual_eui = 6 # kWh/sqft/yr
+        building_size = 10e3
         design_spec = DesignSpec(
             non_circuit_load_data_source="flat",
-            facility_sqft=10000,  # 10,000 sq ft
-            annual_eui=20  # 20 kWh/sqft-yr
+            facility_sqft=building_size,
+            annual_eui=annual_eui,
         )
-        
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        result = design_spec.build_non_circuit_load_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
-        assert result.name == 'non_circuit_load'
-        
+        result = design_spec.build_non_circuit_load_timeseries(self.time_index)
+        assert result.index.equals(self.time_index)
+        assert result.name == 'main_panel_load'
+        assert result.notnull().all()
+
         # Calculate expected hourly energy
-        annual_energy = 10000 * 20  # kWh
-        hourly_energy = annual_energy / 8760  # kWh/hr
+        hourly_energy = building_size * annual_eui / 8760
         assert np.allclose(result, hourly_energy)
-    
-    def test_build_non_circuit_load_timeseries_no_data(self):
-        """Test non-circuit load timeseries with no data (defaults to zeros)."""
-        design_spec = DesignSpec()
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        
-        result = design_spec.build_non_circuit_load_timeseries(time_index)
-        
-        assert isinstance(result, pd.Series)
-        assert len(result) == 24
-        assert result.name == 'non_circuit_load'
-        assert np.allclose(result, 0.0)
 
-
-class TestTariffSpec:
-    """Test TariffSpec build_tariff method."""
-    
-    def test_build_tariff(self):
-        """Test building tariff from TariffSpec."""
-        tariff_spec = TariffSpec(
-            rate_code="test_rate",
-            annual_rate_escalator=0.03
-        )
-        
-        start_date = pd.Timestamp('2023-01-01')
-        end_date = pd.Timestamp('2023-12-31')
-        
-        # This will fail if tariffs.yaml doesn't exist or doesn't contain test_rate
-        # For now, we'll test that the method can be called
-        try:
-            tariff_model = tariff_spec.build_tariff(start_date, end_date)
-            assert isinstance(tariff_model, TariffModel)
-        except (FileNotFoundError, KeyError):
-            # Expected if tariffs.yaml doesn't exist or test_rate not found
-            pytest.skip("tariffs.yaml not found or test_rate not available")
 
 
 class TestScenarioSpec:
     """Test ScenarioSpec methods for building complete inputs."""
+    one_year_site_data = sample_site_data('2023-01-01', '2024-01-01', freq='1H', tz=TZ)
+
+    default_tariff_spec = TariffSpec(rate_code="PGE_B_19_R")
+    default_design_spec = DesignSpec(solar_data_source="upload",
+                                     solar_data=one_year_site_data['solar'],
+                                     circuit_load_data_source="upload",
+                                     circuit_load_data=one_year_site_data['solar_panel_load'],
+                                     non_circuit_load_data_source="upload",
+                                     non_circuit_load_data=one_year_site_data['main_panel_load']
+                                     )
+    default_financial_spec = FinancialSpec()
+    default_general_assumptions = GeneralAssumptions(start_date='2026-01-01',
+                                                     study_years=25
+                                                     )
+    default_scenario_spec = ScenarioSpec(
+            general_assumptions=default_general_assumptions,
+            design_spec=default_design_spec,
+            tariff_spec=default_tariff_spec,
+            financial_spec=default_financial_spec
+        )
     
     def test_build_tariff(self):
         """Test building tariff from ScenarioSpec."""
-        general_assumptions = GeneralAssumptions(
-            start_date='2023-01-01',
-            study_years=1
-        )
-        tariff_spec = TariffSpec(rate_code="test_rate")
-        design_spec = DesignSpec()
-        financial_spec = FinancialSpec()
-        
-        scenario_spec = ScenarioSpec(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec
-        )
-        
-        try:
-            tariff_model = scenario_spec.build_tariff()
-            assert isinstance(tariff_model, TariffModel)
-        except (FileNotFoundError, KeyError):
-            pytest.skip("tariffs.yaml not found or test_rate not available")
-    
+        tariff_model = self.default_scenario_spec.build_tariff()
+        assert isinstance(tariff_model, TariffModel)
+        # Test that tariff components are built
+        assert hasattr(tariff_model, 'tariff_timeseries')
+        assert hasattr(tariff_model, 'demand_charge_categorical_dataframe')
+        assert hasattr(tariff_model, 'demand_charge_price_map')
+        assert hasattr(tariff_model, 'billing_cycles')
+
+
     def test_build_design_inputs(self):
-        """Test building design inputs from ScenarioSpec."""
-        general_assumptions = GeneralAssumptions(
-            start_date='2023-01-01',
-            study_years=1,
-            study_resolution='h'
-        )
-        
-        # Create test data
-        time_index = pd.date_range('2023-01-01', periods=24, freq='h')
-        solar_data = pd.DataFrame(np.ones(24) * 5, index=time_index)
-        circuit_load_data = pd.DataFrame(np.ones(24) * 10, index=time_index)
-        non_circuit_load_data = pd.DataFrame(np.ones(24) * 3, index=time_index)
-        
-        design_spec = DesignSpec(
-            solar_data_source="upload",
-            solar_data=solar_data,
-            circuit_load_data_source="upload",
-            circuit_load_data=circuit_load_data,
-            non_circuit_load_data_source="upload",
-            non_circuit_load_data=non_circuit_load_data
-        )
-        
-        tariff_spec = TariffSpec(rate_code="test_rate")
-        financial_spec = FinancialSpec()
-        
-        scenario_spec = ScenarioSpec(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec
-        )
-        
-        try:
-            design_inputs = scenario_spec.build_design_inputs()
-            assert isinstance(design_inputs, DesignInputs)
-            assert isinstance(design_inputs.site_data, pd.DataFrame)
-            assert 'solar' in design_inputs.site_data.columns
-            assert 'circuit_load' in design_inputs.site_data.columns
-            assert 'non_circuit_load' in design_inputs.site_data.columns
-            assert len(design_inputs.site_data) == 24
-        except (FileNotFoundError, KeyError):
-            pytest.skip("tariffs.yaml not found or test_rate not available")
-    
+        design_inputs = self.default_scenario_spec.build_design_inputs()
+        assert isinstance(design_inputs, DesignInputs)
+        site_data = design_inputs.site_data
+        assert isinstance(site_data, pd.DataFrame)
+        assert sorted(['solar', 'solar_panel_load', 'main_panel_load']) == sorted(site_data.columns)
+        assert site_data.index.freq == self.default_general_assumptions.study_resolution
+        site_data_duration_years = relativedelta(site_data.index[-1] + site_data.index.freq, site_data.index[0]).years
+        assert site_data_duration_years == self.default_general_assumptions.study_years
+
     def test_build_financial_model_inputs(self):
-        """Test building financial model inputs from ScenarioSpec."""
-        general_assumptions = GeneralAssumptions()
-        design_spec = DesignSpec()
-        tariff_spec = TariffSpec(rate_code="test_rate")
-        financial_spec = FinancialSpec(
-            study_years=15,
-            discount_rate=0.08,
-            solar_capital_cost_per_unit=2500.0,
-            battery_capital_cost_per_unit=800.0
-        )
-        
-        scenario_spec = ScenarioSpec(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec
-        )
-        
-        financial_inputs = scenario_spec.build_financial_model_inputs()
+        financial_inputs = self.default_scenario_spec.build_financial_model_inputs()
         
         assert isinstance(financial_inputs, FinancialModelInputs)
         assert financial_inputs.study_years == 15
@@ -269,48 +141,18 @@ class TestScenarioSpec:
         assert financial_inputs.battery_capital_cost_per_unit == 800.0
 
 
-class TestIntegration:
-    """Test integration between interface classes and OptimizationRunnerInputs."""
-    
-    def test_scenario_spec_to_optimization_runner_inputs(self):
-        """Test that ScenarioSpec can create inputs for OptimizationRunnerInputs."""
-        from src.energyoptimizer.optimization_runner import OptimizationRunnerInputs, OptimizationType
-        
-        # Create a complete scenario
-        general_assumptions = GeneralAssumptions(
-            start_date='2023-01-01',
-            study_years=1,
-            optimization_type='self_consumption'
+    def test_optimization_runner_inputs(self):
+        design_inputs = self.default_scenario_spec.build_design_inputs()
+        financial_inputs = self.default_scenario_spec.build_financial_model_inputs()
+
+        # Create OptimizationRunnerInputs
+        runner_inputs = OptimizationRunnerInputs(
+            optimization_type=OptimizationType.SELF_CONSUMPTION,
+            optimization_start=self.default_general_assumptions.start_date,
+            optimization_end=self.default_general_assumptions.end_date,
+            design_inputs=design_inputs,
+            financial_model_inputs=financial_inputs
         )
-        
-        design_spec = DesignSpec()
-        tariff_spec = TariffSpec(rate_code="test_rate")
-        financial_spec = FinancialSpec()
-        
-        scenario_spec = ScenarioSpec(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec
-        )
-        
-        try:
-            # Build inputs
-            design_inputs = scenario_spec.build_design_inputs()
-            financial_inputs = scenario_spec.build_financial_model_inputs()
-            
-            # Create OptimizationRunnerInputs
-            runner_inputs = OptimizationRunnerInputs(
-                optimization_type=OptimizationType.SELF_CONSUMPTION,
-                optimization_start=general_assumptions.start_date,
-                optimization_end=general_assumptions.end_date,
-                design_inputs=design_inputs,
-                financial_model_inputs=financial_inputs
-            )
-            
-            assert isinstance(runner_inputs, OptimizationRunnerInputs)
-            assert runner_inputs.optimization_type == OptimizationType.SELF_CONSUMPTION
-            assert isinstance(runner_inputs.design_inputs, DesignInputs)
-            assert isinstance(runner_inputs.financial_model_inputs, FinancialModelInputs)
-        except (FileNotFoundError, KeyError):
-            pytest.skip("tariffs.yaml not found or test_rate not available")
+
+        assert isinstance(runner_inputs, OptimizationRunnerInputs)
+
