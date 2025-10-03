@@ -174,7 +174,7 @@ class DesignSpec:
         """Build the circuit load timeseries from the design spec."""
         if self.circuit_load_data_source == "upload" and self.circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.circuit_load_data['solar_panel_load']
+            load_series = self.circuit_load_data['der_subpanel_load']
 
             reindexed_load_series = shift_copy_dataset_to_new_index(input_dataset=load_series,
                                                                     new_time_index=time_index,)
@@ -492,9 +492,11 @@ class TariffSpec:
     include_demand_charge: bool = True
     demand_charge_billing_frequency: str = 'month_last_day_of_month'
 
-    def build_tariff(self, start_date: pd.Timestamp, end_date: pd.Timestamp) -> TariffModel:
+    def build_tariff(self, start_date: pd.Timestamp, end_date: pd.Timestamp, study_resolution: str) -> TariffModel:
         """Build the tariff from the tariff spec."""
-        return TariffModel('tariffs.yaml', self.rate_code, start_date, end_date, self.annual_rate_escalator)
+        return TariffModel('tariffs.yaml', self.rate_code, start_date, end_date,
+                           rate_escalator=self.annual_rate_escalator,
+                           output_freq='15min')
 
 
 
@@ -565,7 +567,8 @@ class ScenarioSpec:
         """Build the tariff from the tariff spec."""
         return self.tariff_spec.build_tariff(
             self.general_assumptions.start_date,
-            self.general_assumptions.end_date
+            self.general_assumptions.end_date,
+            self.general_assumptions.study_resolution,
         )
 
     def build_design_inputs(self) -> DesignInputs:

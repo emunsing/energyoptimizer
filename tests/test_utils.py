@@ -41,7 +41,7 @@ def sample_site_data(start_date, end_date, freq, tz='US/Pacific') -> pd.DataFram
 
     site_data = pd.DataFrame({
         'solar': solar_profile,
-        'solar_panel_load': load_profile,
+        'der_subpanel_load': load_profile,
         'main_panel_load': non_circuit_load
     }, index=index)
 

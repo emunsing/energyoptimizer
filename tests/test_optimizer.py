@@ -25,7 +25,7 @@ def sample_tariff_model():
 
 def site_data_and_tariff_model(start_date, end_date, freq):
     site_data = sample_site_data(start_date, end_date, freq)
-    tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date)
+    tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date, output_freq=freq)
     return OptimizationInputs(
         site_data=site_data,
         tariff_model=tariff_model,
@@ -69,6 +69,14 @@ def ten_years_optimization_inputs():
 def sample_optimization_inputs(request):
     return request.getfixturevalue(request.param)
 
+@pytest.fixture
+def sample_optimization_input_list(request):
+    return [
+        request.getfixturevalue("one_month_optimization_inputs"),
+        request.getfixturevalue("one_year_optimization_inputs"),
+        request.getfixturevalue("ten_years_optimization_inputs"),
+    ]
+
 
 @pytest.fixture
 def optimizer_functions():
@@ -85,7 +93,7 @@ def test_optimization_inputs_creation(one_year_optimization_inputs):
     """Test that OptimizationInputs can be created with sample data."""
     assert sample_optimization_inputs.site_data.shape[0] == 8760
 
-    ref_cols = sorted(['solar', 'load', 'non_circuit_load'])
+    ref_cols = sorted(['main_panel_load', 'solar', 'der_subpanel_load'])
     assert ref_cols == sorted(list(sample_optimization_inputs.site_data.columns))
 
     solar = sample_optimization_inputs.site_data['solar']
@@ -105,7 +113,6 @@ def test_optimization_inputs_creation(one_year_optimization_inputs):
     (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization")
 ])
 def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization_inputs):
-    """Test that each optimizer runs without errors."""
     start_time = time.time()
     result = optimizer_func(sample_optimization_inputs)
     print("Optimizer:", optimizer_name, "Time taken (s):", time.time() - start_time)
@@ -114,19 +121,36 @@ def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization
     assert isinstance(result, OptimizerOutputs)
 
     # Check that results_df is a DataFrame
-    assert isinstance(result.results_df, pd.DataFrame)
-    expected_columns = ["P_batt", "P_grid", "E", "solar_used_directly"]
-    assert np.all([col in result.results_df.columns for col in expected_columns])
-    assert result.results_df.shape[0] == sample_optimization_inputs.site_data.shape[0]
+    results_df = result.results_df
+    assert isinstance(results_df, pd.DataFrame)
+    expected_columns = ["P_batt", "P_grid", "E", "solar_post_curtailment"]
+    assert np.all([col in results_df.columns for col in expected_columns])
+    assert results_df.shape[0] == sample_optimization_inputs.site_data.shape[0]
 
-    """
-    Accuracy checks:
-    - Curtailed solar <= input solar
-    - Battery charge/discharge within limits
-    - Grid import/export within limits
-    - Grid + Battery + Solar = Load + Non-circuit load
-    - Battery SoC within limits
-    """
+    assert (results_df['solar_post_curtailment'] - sample_optimization_inputs.site_data['solar']).max() <= 1e-6  # Allow for numeric inaccuracy
+
+    # Battery charge/discharge within limits
+    # P_batt should be within [-batt_block_p_max, batt_block_p_max]
+    assert np.all(results_df['P_batt'] >= -sample_optimization_inputs.batt_block_p_max)
+    assert np.all(results_df['P_batt'] <= sample_optimization_inputs.batt_block_p_max)
+    
+    # Grid import/export within limits
+    # P_grid should be within [circuit_export_kw_limit, circuit_import_kw_limit]
+    assert np.all(results_df['P_grid'] >= sample_optimization_inputs.circuit_export_kw_limit)
+    assert np.all(results_df['P_grid'] <= sample_optimization_inputs.circuit_import_kw_limit)
+    
+    # Energy balance: Grid + Battery + Solar = Load + Non-circuit load
+    # Get load data from site_data
+    site_data = sample_optimization_inputs.site_data
+    total_load = site_data['der_subpanel_load'] + site_data['main_panel_load']
+    energy_balance = results_df['P_grid'] + results_df['P_batt'] + results_df['solar_post_curtailment']
+    # Allow small numerical tolerance for floating point precision
+    assert np.allclose(energy_balance, total_load, rtol=1e-6, atol=1e-6)
+    
+    # Battery SoC within limits
+    # E (battery energy/SoC) should be within [0, batt_block_e_max]
+    assert np.all(results_df['E'] >= 0)
+    assert np.all(results_df['E'] <= sample_optimization_inputs.batt_block_e_max)
 
 
 def test_optimizer_clock_no_horizon_or_lookback():

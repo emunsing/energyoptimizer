@@ -44,7 +44,7 @@ class TestDesignSpec:
         )
         result = design_spec.build_circuit_load_timeseries(self.time_index)
         assert result.index.equals(self.time_index)
-        assert result.name == 'solar_panel_load'
+        assert result.name == 'der_subpanel_load'
         assert result.notnull().all()
 
         # Confirm that results are roughly constant, allowing for leap years
@@ -95,7 +95,7 @@ class TestScenarioSpec:
     default_design_spec = DesignSpec(solar_data_source="upload",
                                      solar_data=one_year_site_data['solar'],
                                      circuit_load_data_source="upload",
-                                     circuit_load_data=one_year_site_data['solar_panel_load'],
+                                     circuit_load_data=one_year_site_data['der_subpanel_load'],
                                      non_circuit_load_data_source="upload",
                                      non_circuit_load_data=one_year_site_data['main_panel_load']
                                      )
@@ -126,7 +126,7 @@ class TestScenarioSpec:
         assert isinstance(design_inputs, DesignInputs)
         site_data = design_inputs.site_data
         assert isinstance(site_data, pd.DataFrame)
-        assert sorted(['solar', 'solar_panel_load', 'main_panel_load']) == sorted(site_data.columns)
+        assert sorted(['solar', 'der_subpanel_load', 'main_panel_load']) == sorted(site_data.columns)
         assert site_data.index.freq == self.default_general_assumptions.study_resolution
         site_data_duration_years = relativedelta(site_data.index[-1] + site_data.index.freq, site_data.index[0]).years
         assert site_data_duration_years == self.default_general_assumptions.study_years

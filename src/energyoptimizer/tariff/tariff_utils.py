@@ -49,7 +49,7 @@ class TariffModel:
     energy charges, demand charges, and total bills for given power series.
     """
     
-    def __init__(self, tariff_file: str, rate_code: str, start_date: date, end_date: date, rate_escalator: float = 0.0):
+    def __init__(self, tariff_file: str, rate_code: str, start_date: date, end_date: date, rate_escalator: float = 0.0, output_freq: str = '15min'):
         """
         Initialize the TariffModel with tariff configuration and date range.
         
@@ -62,6 +62,7 @@ class TariffModel:
         self.end_date = pd.Timestamp(end_date)
         self.years = range(self.start_date.year, self.end_date.year + 1)
         self.rate_escalator = rate_escalator
+        self.output_freq = output_freq
         
         # Load tariff configuration
         if os.path.isabs(tariff_file):
@@ -83,7 +84,7 @@ class TariffModel:
         self.time_index = pd.date_range(
             start=start_date, 
             end=end_date, 
-            freq=self.billing_data_granularity, 
+            freq=self.output_freq,
             inclusive='both'
         )
 
