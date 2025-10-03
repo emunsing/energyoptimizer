@@ -1,6 +1,10 @@
 import numpy as np
 import pandas as pd
 
+from src.energyoptimizer.optimizers import OptimizationInputs
+from src.energyoptimizer.tariff.tariff_utils import TariffModel
+
+
 def ensure_tzinfo(t, tz):
     t = pd.Timestamp(t)
     if t.tzinfo is None:
@@ -46,3 +50,23 @@ def sample_site_data(start_date, end_date, freq, tz='US/Pacific') -> pd.DataFram
     }, index=index)
 
     return site_data
+
+
+def site_data_and_tariff_model(start_date, end_date, freq):
+    site_data = sample_site_data(start_date, end_date, freq)
+    tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date, output_freq=freq)
+    return OptimizationInputs(
+        site_data=site_data,
+        tariff_model=tariff_model,
+        batt_rt_eff=0.85,
+        batt_block_e_max=13.5,
+        batt_block_p_max=5.0,
+        backup_reserve=0.2,
+        circuit_import_kw_limit=100.0,
+        circuit_export_kw_limit=-100.0,
+        site_import_kw_limit=100.0,
+        site_export_kw_limit=-100.0,
+        solar_annualized_cost_per_kw=0.15,
+        batt_annualized_cost_per_unit=1000.0,
+        integer_problem=False
+    )

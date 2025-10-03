@@ -2,45 +2,22 @@ import pytest
 import pandas as pd
 import numpy as np
 import time
-from pathlib import Path
-from unittest.mock import Mock
-from .test_utils import sample_site_data
+from .test_utils import sample_site_data, site_data_and_tariff_model
 
 from src.energyoptimizer.optimizers import (
     tou_optimization, 
-    self_consumption, 
+    single_panel_self_consumption,
+    subpanel_self_consumption,
     tou_endogenous_sizing_optimization,
-    OptimizationInputs,
     OptimizerOutputs
 )
-from src.energyoptimizer.optimization_runner import OptimizationType
 from src.energyoptimizer.tariff.tariff_utils import TariffModel
 
 
 @pytest.fixture
 def sample_tariff_model():
     """Create a TariffModel for testing."""
-    from datetime import date
     return TariffModel('tariffs.yaml', 'PGE_B_19_R', '2025-01-01', '2035-01-01')
-
-def site_data_and_tariff_model(start_date, end_date, freq):
-    site_data = sample_site_data(start_date, end_date, freq)
-    tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date, output_freq=freq)
-    return OptimizationInputs(
-        site_data=site_data,
-        tariff_model=tariff_model,
-        batt_rt_eff=0.85,
-        batt_block_e_max=13.5,
-        batt_block_p_max=5.0,
-        backup_reserve=0.2,
-        circuit_import_kw_limit=100.0,
-        circuit_export_kw_limit=-100.0,
-        site_import_kw_limit=100.0,
-        site_export_kw_limit=-100.0,
-        solar_annualized_cost_per_kw=0.15,
-        batt_annualized_cost_per_unit=1000.0,
-        integer_problem=False
-    )
 
 
 @pytest.fixture
@@ -83,7 +60,7 @@ def optimizer_functions():
     """Return all optimizer functions for parameterized testing."""
     return [
         (tou_optimization, "tou_optimization"),
-        (self_consumption, "self_consumption"),
+        (subpanel_self_consumption, "self_consumption"),
         (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization")
     ]
 

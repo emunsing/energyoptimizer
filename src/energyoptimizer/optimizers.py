@@ -59,9 +59,8 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
     backup_reserve = opt_inputs.backup_reserve
-    import_kw_limit = opt_inputs.circuit_import_kw_limit
-    export_kw_limit = opt_inputs.circuit_export_kw_limit
-
+    import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
+    export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
 
     tariff = opt_inputs.tariff_model.tariff_timeseries
 
@@ -147,8 +146,8 @@ def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOu
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
     backup_reserve = opt_inputs.backup_reserve
-    import_kw_limit = opt_inputs.circuit_import_kw_limit
-    export_kw_limit = opt_inputs.circuit_export_kw_limit
+    import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
+    export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
 
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
@@ -221,19 +220,6 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
     - If there is still excess, and we aren't at the subpanel export limit, export to grid within site_export_limit
         - Note: This won't happen if the der_subpanel_export_kw_limit is binding
     - Any remaining excess is curtailed
-
-    Design cases:
-    - site_export_limit < der_subpanel_export_kw_limit
-    - site_export_limit > der_subpanel_export_kw_limit
-    - site_export_limit = 0; der_subpanel_export_kw_limit < 0
-    Solar gen cases:
-    - der_subpanel_load < solar < der_subpanel_load + main_panel_load
-    - der_subpanel_load > solar
-    - solar > der_subpanel_load + main_panel_load; battery empty
-    - solar > der_subpanel_load + main_panel_load; battery full
-    No solar, battery
-
-
     """
     # Extract parameters from OptimizationInputs
     site_data = opt_inputs.site_data
@@ -242,13 +228,15 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
     backup_reserve = opt_inputs.backup_reserve
-    import_kw_limit = opt_inputs.circuit_import_kw_limit
-    export_kw_limit = opt_inputs.circuit_export_kw_limit
 
-    assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
-    time_intervals = site_data.index.diff()[1:].unique()
-    assert len(time_intervals) == 1, "Dataframes must have a constant-interval time index"
-    dt = time_intervals[0].total_seconds() / 3600
+    if len(site_data) == 1:
+        # Testing infrastructure; single timestep
+        dt = 1.0
+    else:
+        assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
+        time_intervals = site_data.index.diff()[1:].unique()
+        assert len(time_intervals) == 1, "Dataframes must have a constant-interval time index"
+        dt = time_intervals[0].total_seconds() / 3600
 
     starting_soe = opt_inputs.batt_starting_soe if opt_inputs.batt_starting_soe is not None else backup_reserve
     starting_energy_kwh = starting_soe * batt_e_max
@@ -267,7 +255,7 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
     for t in range(n):
         der_subpanel_load = site_data['der_subpanel_load'].iloc[t]
         main_panel_load = site_data['main_panel_load'].iloc[t]
-        servable_main_load = min(opt_inputs.der_subpanel_export_kw_limit, main_panel_load)
+        servable_main_load = min(-opt_inputs.der_subpanel_export_kw_limit, main_panel_load)
         solar = site_data['solar'].iloc[t]
         subpanel_net_load = der_subpanel_load - solar  # positive: excess solar, negative: deficit
         servable_net_load = der_subpanel_load + servable_main_load - solar
@@ -275,13 +263,16 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
         batt_e = E[t]
 
         if not feasible:
+            # Fill remainder of timeseries with NaNs after the breaking timestamp
             P_batt[t] = np.nan
             P_subpanel[t] = np.nan
             P_grid[t] = np.nan
             solar_post_curtailment[t] = np.nan
             E[t+1] = np.nan
-        # Excess solar: try to charge battery
+
         elif effective_net_load < 0:
+            # Excess solar: try to charge battery
+
             # Max possible charge (limited by battery power and available solar)
             max_charge_power = min(batt_p_max, -effective_net_load, (batt_e_max - batt_e) / (dt * oneway_eff))
             charge_power = max(0, max_charge_power)
@@ -293,7 +284,7 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
             # Export from panel up to der_subpanel_export_kw_limit (which is negative)
             subpanel_export_power = min(0,
                                         max(subpanel_net_load_after_charging,
-                                            export_kw_limit + main_panel_load,
+                                            opt_inputs.site_export_kw_limit - main_panel_load,
                                             opt_inputs.der_subpanel_export_kw_limit)
                                         )
             curtailed_solar = abs(subpanel_net_load_after_charging - subpanel_export_power)
@@ -327,9 +318,9 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
                 P_grid[t] = np.nan
                 solar_post_curtailment[t] = np.nan
 
-    res = pd.DataFrame.from_dict({'P_batt': P_batt,
-                                  'P_grid': P_grid,
-                                    'P_subpanel': P_subpanel,
+    res = pd.DataFrame.from_dict({'P_grid': P_grid,
+                                  'P_subpanel': P_subpanel,
+                                  'P_batt': P_batt,
                                   'E': E[1:],
                                   'solar_post_curtailment': solar_post_curtailment
                                   }).set_index(site_data.index)
