@@ -3,6 +3,7 @@ import cvxpy as cp
 import pandas as pd
 import numpy as np
 import time
+import scipy.sparse as sps
 
 # from .batteryopt_interface import TariffModel  # Commented out due to incomplete implementation
 
@@ -41,7 +42,7 @@ class OptimizerOutputs:
     """Standardized output format for all optimizers."""
     results_df: pd.DataFrame
     status: str | None = None
-    sizing_results: dict = attrs.field(factory=dict)
+    sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": 1, "n_solar": 1})
 
     def get_results(self) -> pd.DataFrame:
         """Get the optimization results DataFrame."""
@@ -80,7 +81,8 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     n = site_data.shape[0]
     E_0 = starting_energy_kwh
 
-    E_transition = np.hstack([np.eye(n), np.zeros(n).reshape(-1,1)])
+    E_transition = sps.hstack([sps.eye(n, format="csr"), sps.csr_matrix((n, 1))], format="csr")
+    # E_transition = np.hstack([np.eye(n), np.zeros(n).reshape(-1,1)])
 
     P_batt_charge = cp.Variable(n)
     P_batt_discharge = cp.Variable(n)
@@ -111,7 +113,7 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                 solar_post_curtailment >= 0,
                 solar_post_curtailment <= site_data['solar'],
                 E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
-                P_batt_charge + P_batt_discharge + P_subpanel_import + P_subpanel_export - site_data['der_subpanel_load'] + solar_post_curtailment == 0,
+                P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
                 E[0] == E_0
                 ]
 
@@ -331,7 +333,6 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
 def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     # Extract parameters from OptimizationInputs
     site_data = opt_inputs.site_data
-    tariff = opt_inputs.tariff_model.get_tariff_data(site_data.index)
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_block_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
@@ -339,8 +340,6 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     batt_annualized_cost_per_unit = opt_inputs.batt_annualized_cost_per_unit
     integer_problem = opt_inputs.integer_problem
     
-    assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
-
     """Assumes that solar data in the site_data is per kW"""
     simulation_years = (site_data.index[-1] - site_data.index[0]).total_seconds() / (365 * 24 * 60 * 60)
     tariff = opt_inputs.tariff_model.tariff_timeseries
@@ -356,7 +355,8 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     oneway_eff = np.sqrt(batt_rt_eff)
     backup_reserve = 0.2
     n = site_data.shape[0]
-    E_transition = np.hstack([np.eye(n), np.zeros(n).reshape(-1,1)])
+    E_transition = sps.hstack([sps.eye(n, format="csr"), sps.csr_matrix((n, 1))], format="csr")
+    # E_transition = np.hstack([np.eye(n), np.zeros(n).reshape(-1,1)])
     starting_soe = opt_inputs.batt_starting_soe if opt_inputs.batt_starting_soe is not None else backup_reserve
 
     s_size_kw = cp.Variable(integer=integer_problem)
@@ -394,9 +394,9 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                    e_min <= E,
                    E <= batt_e_max,
                    solar_post_curtailment >= 0,
-                   solar_post_curtailment <= site_data['solar'] * s_size_kw,
+                   solar_post_curtailment <= cp.Constant(site_data['solar']) * s_size_kw,
                    E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
-                   P_batt_charge + P_batt_discharge + P_subpanel_import + P_subpanel_export - site_data['der_subpanel_load'] + solar_post_curtailment == 0,
+                   P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
                    E[0] == E_0
                    ]
 
@@ -416,7 +416,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                         'P_grid': P_grid_buy.value + P_grid_sell.value,
                         'P_subpanel': P_subpanel_import.value + P_subpanel_export.value,
                         'E': E[1:].value,
-                        'solar_post_curtailment': solar_post_curtailment,
+                        'solar_post_curtailment': solar_post_curtailment.value,
                               }).set_index(site_data.index,)
-    sizing_results = {'n_batts': n_batts.value, 's_size_kw': s_size_kw.value}
+    sizing_results = {'n_batt_blocks': n_batts.value, 'n_solar': s_size_kw.value}
     return OptimizerOutputs(results_df=res, sizing_results=sizing_results)
