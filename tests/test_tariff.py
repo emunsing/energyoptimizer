@@ -38,9 +38,9 @@ class TestTariffModel:
         assert hasattr(tariff_model, 'billing_cycles')
         
         # Test tariff timeseries structure
-        assert 'energy_import_rate_kwh' in tariff_model.full_tariff_timeseries.columns
-        assert 'energy_export_rate_kwh' in tariff_model.full_tariff_timeseries.columns
-        assert 'demand_charge_rate_kw' in tariff_model.full_tariff_timeseries.columns
+        assert 'energy_import_rate_kwh' in tariff_model.tariff_timeseries.columns
+        assert 'energy_export_rate_kwh' in tariff_model.tariff_timeseries.columns
+        assert 'demand_charge_rate_kw' in tariff_model.tariff_timeseries.columns
         
         # Test billing cycles
         assert len(tariff_model.billing_cycles) > 0
@@ -275,7 +275,8 @@ class TestTariffModel:
             assert sorted(rate_table.columns) == sorted(year_range)
             assert np.all(np.isclose(rate_table[end_year], rate_table[start_year] * ((1 + self.rate_escalator) ** (end_year - start_year))))
 
-        tariff_timeseries = tariff_model.tariff_timeseries(time_index[0], time_index[-1])
+        tariff_timeseries = tariff_model.tariff_timeseries.copy()
+        tariff_timeseries = tariff_timeseries.loc[time_index[0]:time_index[-1], :]
         data_columns = tariff_timeseries.columns
         start_year_tariff_timeseries = tariff_timeseries[tariff_timeseries.index.year == start_year]
         end_year_tariff_timeseries = tariff_timeseries[tariff_timeseries.index.year == end_year]

@@ -119,14 +119,11 @@ class TariffModel:
                                                                   self.season_period_export_rates)
         demand_charge = self._build_rate_series_from_annual_rates(self.season_period_masks,
                                                                   self.season_period_demand_rates)
-        self.full_tariff_timeseries = pd.DataFrame.from_dict({
+        self.tariff_timeseries = pd.DataFrame.from_dict({
             'energy_import_rate_kwh': import_tariff,
             'energy_export_rate_kwh': export_tariff,
             'demand_charge_rate_kw': demand_charge
         }, orient='columns')
-
-    def tariff_timeseries(self, start: pd.Timestamp, end: pd.Timestamp):
-        return self.full_tariff_timeseries.loc[start:end]
 
     @staticmethod
     def _series_outer_product(s1: pd.Series, s2: pd.Series) -> pd.DataFrame:
@@ -253,7 +250,8 @@ class TariffModel:
             Total demand charge in dollars
         """
         total_demand_charge = 0.0
-        tariff_timeseries = self.tariff_timeseries(power_series.index[0], power_series.index[-1])
+        tariff_timeseries = self.tariff_timeseries.copy()
+        tariff_timeseries = tariff_timeseries.loc[power_series.index[0]:power_series.index[-1], :]
         aligned_power_series = power_series.resample(tariff_timeseries.index.freq, closed='left').max().dropna()
 
 
@@ -286,7 +284,9 @@ class TariffModel:
         """
         # Align power series with tariff timeseries
         energy_series = power_to_energy(power_series)
-        tariff_timeseries = self.tariff_timeseries(energy_series.index[0], energy_series.index[-1])
+        tariff_timeseries = self.tariff_timeseries.copy()
+        tariff_timeseries = tariff_timeseries.loc[energy_series.index[0]:energy_series.index[-1], :]
+
         aligned_energy_series = energy_series.resample(tariff_timeseries.index.freq, closed='left').sum()
         
         # Calculate energy charges

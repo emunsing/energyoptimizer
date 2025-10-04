@@ -96,7 +96,8 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
     export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
 
-    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
+    tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
+    tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
 
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
@@ -176,7 +177,8 @@ def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOu
     """
     # Extract parameters from OptimizationInputs
     site_data = opt_inputs.site_data
-    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
+    tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
+    tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
@@ -258,7 +260,8 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
     """
     # Extract parameters from OptimizationInputs
     site_data = opt_inputs.site_data
-    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
+    tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
+    tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
@@ -375,7 +378,8 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     
     """Assumes that solar data in the site_data is per kW"""
     simulation_years = (site_data.index[-1] - site_data.index[0]).total_seconds() / (365 * 24 * 60 * 60)
-    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
+    tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
+    tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
 
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
