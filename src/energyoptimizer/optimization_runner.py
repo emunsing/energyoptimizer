@@ -2,7 +2,11 @@ import pandas as pd
 import enum
 from typing import Optional, TYPE_CHECKING
 import attrs
-from .optimizers import tou_optimization, subpanel_self_consumption, single_panel_self_consumption, tou_endogenous_sizing_optimization, OptimizationInputs, OptimizerOutputs
+from .optimizers import (OptimizationInputs, OptimizerOutputs,
+                         subpanel_self_consumption, single_panel_self_consumption,
+                         tou_optimization, demand_charge_tou_optimization,
+                         tou_endogenous_sizing_optimization,
+                         )
 
 from .batteryopt_interface import DesignInputs, FinancialModelInputs, OptimizationType, OptimizationClock, OptimizationRunnerInputs
 
@@ -14,6 +18,7 @@ OPTIMIZER_FUNCTIONS = {
     OptimizationType.SIMPLE_SELF_CONSUMPTION: single_panel_self_consumption,
     OptimizationType.SUBPANEL_SELF_CONSUMPTION: subpanel_self_consumption,
     OptimizationType.TOU_OPTIMIZATION: tou_optimization,
+    OptimizationType.DEMAND_CHARGE_TOU_OPTIMIZATION: demand_charge_tou_optimization,
     OptimizationType.TOU_ENDOGENOUS_SIZING: tou_endogenous_sizing_optimization
 }
 

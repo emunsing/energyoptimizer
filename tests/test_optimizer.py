@@ -9,7 +9,8 @@ from src.energyoptimizer.batteryopt_interface import (
     DesignInputs, FinancialModelInputs
 )
 from src.energyoptimizer.optimizers import (
-    tou_optimization, 
+    tou_optimization,
+    demand_charge_tou_optimization,
     single_panel_self_consumption,
     subpanel_self_consumption,
     tou_endogenous_sizing_optimization,
@@ -69,7 +70,8 @@ def optimizer_function_list():
     return [
         (tou_optimization, "tou_optimization"),
         (subpanel_self_consumption, "self_consumption"),
-        (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization")
+        (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization"),
+        (demand_charge_tou_optimization, "demand_charge_tou_optimization")
     ]
 
 
@@ -95,7 +97,8 @@ def test_optimization_inputs_creation(one_year_optimization_inputs):
 @pytest.mark.parametrize("optimizer_func,optimizer_name", [
     (tou_optimization, "tou_optimization"),
     (subpanel_self_consumption, "subpanel_self_consumption"),
-    (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization")
+    (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization"),
+    (demand_charge_tou_optimization, "demand_charge_tou_optimization")
 ])
 def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization_inputs):
     start_time = time.time()
@@ -141,6 +144,25 @@ def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization
     # E (battery energy/SoC) should be within [0, batt_block_e_max]
     assert np.all(results_df['E'] >= 0)
     assert np.all(results_df['E'] <= sample_optimization_inputs.batt_block_e_max * sizing_results['n_batt_blocks'])
+
+
+def test_demand_charge_optimization(sample_optimization_inputs):
+    optimization_inputs = sample_optimization_inputs
+    demand_charge_optimization_result = demand_charge_tou_optimization(optimization_inputs)
+    assert demand_charge_optimization_result.status == 'optimal'
+    p_grid = demand_charge_optimization_result.results_df['P_grid']
+    tariff = optimization_inputs.tariff_model
+    demand_charge_bill_cycles = tariff.compute_bill_series(p_grid)
+    demand_charge_total_bill = tariff.compute_total_bill(p_grid)
+
+    tou_optimization_result = tou_optimization(optimization_inputs)
+    assert tou_optimization_result.status == 'optimal'
+    p_grid_tou = tou_optimization_result.results_df['P_grid']
+    tou_bill_cycles = tariff.compute_bill_series(p_grid_tou)
+    tou_total_bill = tariff.compute_total_bill(p_grid_tou)
+
+    assert demand_charge_total_bill['total_bill'] <= tou_total_bill['total_bill']
+    assert np.all(demand_charge_bill_cycles['demand_charge'] <= tou_bill_cycles['demand_charge'])
 
 
 # Clock types: Different frequencies:

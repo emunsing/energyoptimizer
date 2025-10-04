@@ -566,6 +566,7 @@ class OptimizationType(enum.Enum):
     SUBPANEL_SELF_CONSUMPTION = "subpanel_self_consumption"
     TOU_OPTIMIZATION = "tou_optimization"
     TOU_ENDOGENOUS_SIZING = "tou_endogenous_sizing"
+    DEMAND_CHARGE_TOU_OPTIMIZATION = "demand_charge_tou_optimization"
 
 
 @attrs.define
