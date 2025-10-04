@@ -5,6 +5,7 @@ from typing import Optional, Union
 from .tariff.tariff_utils import TariffModel
 from dateutil.relativedelta import relativedelta
 from .batteryopt_utils import shift_copy_dataset_to_new_index
+from pandas.tseries.frequencies import to_offset
 
 @attrs.define
 class DesignInputs:
@@ -25,8 +26,8 @@ class DesignInputs:
     backup_reserve: float = 0.2
     
     # Circuit limits
-    circuit_import_kw_limit: float = 100.0
-    circuit_export_kw_limit: float = -100.0
+    der_subpanel_import_kw_limit: float = 100.0
+    der_subpanel_export_kw_limit: float = -100.0
     site_import_kw_limit: float = 100.0
     site_export_kw_limit: float = -100.0
     
@@ -43,6 +44,7 @@ class FinancialModelInputs:
     Financial model inputs for optimization.
     Contains all financial parameters needed for cost calculations.
     """
+    study_years: int
     product_cash_flows: dict[str, 'ProductCashFlows']
     discount_rate: float = 0.07
     solar_levelized_unit_cost: float = 0.0  # $/kWh
@@ -115,8 +117,8 @@ class DesignSpec:
     backup_reserve: float = 0.2
     
     # Circuit limits
-    circuit_import_limit: float = 100.0  # kW
-    circuit_export_limit: float = -100.0  # kW
+    der_subpanel_import_kw_limit: float = 100.0  # kW
+    der_subpanel_export_kw_limit: float = -100.0  # kW
     site_import_limit: float = 100.0  # kW
     site_export_limit: float = -100.0  # kW
     
@@ -304,6 +306,7 @@ class FinancialSpec:
     reference_upgrade_cost: float = 100000.0  # $ without DER
 
     ## Not accessible with init ##
+    cash_flow_df: pd.DataFrame | None = attrs.field(init=False, default=None)
     solar_unit_cash_flows: ProductCashFlows | None = attrs.field(init=False, default=None)
     battery_unit_cash_flows: ProductCashFlows | None = attrs.field(init=False, default=None)
     total_cash_flows: pd.DataFrame | None = attrs.field(init=False, default=None)
@@ -315,7 +318,7 @@ class FinancialSpec:
         return pd.DataFrame(0.0, index=range(study_years), columns=cash_flow_df_cols)
 
     def _initialize_cash_flow_df(self, study_years):
-        if not hasattr(self, 'cash_flow_df') or self.cash_flow_df is None or self.cash_flow_df.empty:
+        if self.cash_flow_df is None or self.cash_flow_df.empty:
             self.cash_flow_df = self._get_zero_cash_flow_df(study_years)
 
     @staticmethod
@@ -362,8 +365,8 @@ class FinancialSpec:
 
             # Compute the future residual value for this unit at either the end of the current lifetime, or the end of the study
             retirement_year = t + product_spec.lifetime_years
-            if retirement_year > study_years:
-                retirement_year = study_years
+            if retirement_year > (study_years-1):  # Note shift by 1 for 0-indexed years. Assume replacement value is recognized at *end* of final year
+                retirement_year = (study_years-1)
 
             portion_depreciation_period = (retirement_year - t) / product_spec.lifetime_years
             depreciation_cost = base_cost * (1 - product_spec.residual_value) * portion_depreciation_period
@@ -444,6 +447,7 @@ class FinancialSpec:
         )
 
         return FinancialModelInputs(
+            study_years=study_years,
             product_cash_flows = {'solar': self.solar_unit_cash_flows, 'battery': self.battery_unit_cash_flows},
             discount_rate=self.discount_rate,
             solar_levelized_unit_cost=self.solar_unit_cash_flows.unit_annualized_cost,
@@ -464,22 +468,32 @@ class GeneralAssumptions:
         - TOU + demand charge optimization
     - Endogenous sizing: bool
     """
-    start_date: Optional[Union[str, pd.Timestamp]] = None
+    start_date: Optional[pd.Timestamp | str] = None
     timezone: str = 'US/Pacific'
     study_years: int = 10
     endogenous_sizing: bool = False
     optimization_type: str = 'self_consumption'  # 'self_consumption', 'tou_optimization', 'tou_endogenous_sizing'
     study_resolution: str = '1H'  # e.g., '1H', '15T'
-    end_date: Optional[pd.Timestamp] = None
+    end_date: Optional[pd.Timestamp | str] = None
 
     def __attrs_post_init__(self):
         if self.start_date is None:
             self.start_date = pd.Timestamp.now(tz=self.timezone).normalize()
         elif isinstance(self.start_date, str):
             self.start_date = pd.Timestamp(self.start_date, tz=self.timezone)
-        
+        elif hasattr(self.start_date, 'tz_localize'):
+            # If start_date is timezone-naive, localize it
+            if self.start_date.tz is None:
+                self.start_date = self.start_date.tz_localize(self.timezone)
+
         if self.end_date is None:
             self.end_date = self.start_date + pd.DateOffset(years=self.study_years)
+        elif isinstance(self.end_date, str):
+            self.end_date = pd.Timestamp(self.end_date, tz=self.timezone)
+        elif hasattr(self.end_date, 'tz_localize'):
+            if self.end_date.tz is None:
+                self.end_date = self.end_date.tz_localize(self.timezone)
+
 
 
 @attrs.define
@@ -496,7 +510,7 @@ class TariffSpec:
         """Build the tariff from the tariff spec."""
         return TariffModel('tariffs.yaml', self.rate_code, start_date, end_date,
                            rate_escalator=self.annual_rate_escalator,
-                           output_freq='15min')
+                           output_freq=study_resolution)
 
 
 
@@ -505,7 +519,7 @@ class OptimizationClock:
     """We may want to create non-overlapping optimization windows (typically for design),
     or we may want rolling optimization with a long forecasting window, but frequent re-optimization (model predictive control archetype).
     """
-    frequency: str | pd.DateOffset  # e.g., '1D' for daily, '1H' for hourly
+    frequency: Optional[str | pd.DateOffset] = None  # e.g., '1D' for daily, '1H' for hourly; None for single full-period optimization
     horizon: Optional[pd.DateOffset] = None  # e.g., '7D' for 7 days, '1D' for 1 day
     lookback: Optional[pd.DateOffset] = None
 
@@ -521,15 +535,26 @@ class OptimizationClock:
             List of tuples containing (optimize_at, data_from, data_until) for each optimization interval
         """
         # Generate optimization timestamps using pd.date_range
-        optimize_times = pd.date_range(start=start, end=end, freq=self.frequency)
 
-        intervals = []
-        for optimize_at in optimize_times:
-            # Use smart defaults: if lookback/horizon is None, use the full period
-            data_from = max(start, optimize_at - (self.lookback or pd.DateOffset(0)))
-            data_until = min(end, optimize_at + (self.horizon or pd.DateOffset(0)))
+        if self.frequency is None or (end - to_offset(self.frequency))<=start:
+            # Single optimization for the full period
+            assert self.lookback is None and self.horizon is None, "Lookback and horizon must be None if frequency=None"
+            intervals =  [(start, start, end)]
+        else:
+            optimize_times = pd.date_range(start=start, end=end - to_offset(self.frequency), freq=self.frequency)
+            if optimize_times[0] > start:
+                optimize_times = optimize_times.insert(0, start)
 
-            intervals.append((optimize_at, data_from, data_until))
+            intervals = []
+            for optimize_at in optimize_times:
+                # Use smart defaults: if lookback/horizon is None, use the full period
+                data_from = max(start, optimize_at - (self.lookback or pd.DateOffset(0)))
+                if self.horizon:
+                    data_until = optimize_at + self.horizon
+                else:
+                    data_until = end
+
+                intervals.append((optimize_at, data_from, data_until))
 
         return intervals
 
@@ -537,7 +562,8 @@ class OptimizationClock:
 
 class OptimizationType(enum.Enum):
     """Enum for different optimization types available in the system."""
-    SELF_CONSUMPTION = "self_consumption"
+    SIMPLE_SELF_CONSUMPTION = "simple_self_consumption"
+    SUBPANEL_SELF_CONSUMPTION = "subpanel_self_consumption"
     TOU_OPTIMIZATION = "tou_optimization"
     TOU_ENDOGENOUS_SIZING = "tou_endogenous_sizing"
 
@@ -575,12 +601,7 @@ class ScenarioSpec:
         """Build the design inputs from the design spec."""
         # Create time index - ensure timezone consistency
         start_date = self.general_assumptions.start_date
-        if hasattr(start_date, 'tz_localize'):
-            # If start_date is timezone-naive, localize it
-            if start_date.tz is None:
-                start_date = start_date.tz_localize(self.general_assumptions.timezone)
-        elif isinstance(start_date, str):
-            start_date = pd.Timestamp(start_date, tz=self.general_assumptions.timezone)
+        assert start_date.tz is not None, "Start date must be timezone-aware"
         
         time_index = pd.date_range(
             start=start_date,
@@ -596,8 +617,8 @@ class ScenarioSpec:
         # Combine into site data DataFrame
         site_data = pd.DataFrame({
             'solar': solar_data,
-            'circuit_load': circuit_load_data,
-            'non_circuit_load': non_circuit_load_data
+            'der_subpanel_load': circuit_load_data,
+            'main_panel_load': non_circuit_load_data
         }, index=time_index)
         
         # Build tariff model
@@ -610,8 +631,8 @@ class ScenarioSpec:
             batt_block_e_max=self.design_spec.battery_unit_size,
             batt_block_p_max=self.design_spec.battery_unit_power,
             backup_reserve=self.design_spec.backup_reserve,
-            circuit_import_kw_limit=self.design_spec.circuit_import_limit,
-            circuit_export_kw_limit=self.design_spec.circuit_export_limit,
+            der_subpanel_import_kw_limit=self.design_spec.der_subpanel_import_kw_limit,
+            der_subpanel_export_kw_limit=self.design_spec.der_subpanel_export_kw_limit,
             site_import_kw_limit=self.design_spec.site_import_limit,
             site_export_kw_limit=self.design_spec.site_export_limit,
             min_battery_units=self.design_spec.min_battery_units,

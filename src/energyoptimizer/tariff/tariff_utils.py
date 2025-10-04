@@ -119,11 +119,14 @@ class TariffModel:
                                                                   self.season_period_export_rates)
         demand_charge = self._build_rate_series_from_annual_rates(self.season_period_masks,
                                                                   self.season_period_demand_rates)
-        self.tariff_timeseries = pd.DataFrame({
+        self.full_tariff_timeseries = pd.DataFrame.from_dict({
             'energy_import_rate_kwh': import_tariff,
             'energy_export_rate_kwh': export_tariff,
             'demand_charge_rate_kw': demand_charge
-        })
+        }, orient='columns')
+
+    def tariff_timeseries(self, start: pd.Timestamp, end: pd.Timestamp):
+        return self.full_tariff_timeseries.loc[start:end]
 
     @staticmethod
     def _series_outer_product(s1: pd.Series, s2: pd.Series) -> pd.DataFrame:
@@ -250,7 +253,8 @@ class TariffModel:
             Total demand charge in dollars
         """
         total_demand_charge = 0.0
-        aligned_power_series = power_series.resample(self.tariff_timeseries.index.freq, closed='left').max().dropna()
+        tariff_timeseries = self.tariff_timeseries(power_series.index[0], power_series.index[-1])
+        aligned_power_series = power_series.resample(tariff_timeseries.index.freq, closed='left').max().dropna()
 
 
         # For each billing cycle
@@ -282,15 +286,16 @@ class TariffModel:
         """
         # Align power series with tariff timeseries
         energy_series = power_to_energy(power_series)
-        aligned_energy_series = energy_series.resample(self.tariff_timeseries.index.freq, closed='left').sum()
+        tariff_timeseries = self.tariff_timeseries(energy_series.index[0], energy_series.index[-1])
+        aligned_energy_series = energy_series.resample(tariff_timeseries.index.freq, closed='left').sum()
         
         # Calculate energy charges
         import_energy = aligned_energy_series.clip(lower=0)  # Only positive (import) power
         export_energy = (-aligned_energy_series).clip(lower=0)  # Only negative (export) power as positive
         
         # Calculate charges
-        import_charges = (import_energy * self.tariff_timeseries['energy_import_rate_kwh']).sum()
-        export_revenue = (export_energy * self.tariff_timeseries['energy_export_rate_kwh'].fillna(0)).sum()
+        import_charges = (import_energy * tariff_timeseries['energy_import_rate_kwh']).sum()
+        export_revenue = (export_energy * tariff_timeseries['energy_export_rate_kwh'].fillna(0)).sum()
         
         return import_charges - export_revenue
     

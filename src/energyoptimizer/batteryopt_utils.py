@@ -3,6 +3,7 @@ import numpy as np
 import random
 from dateutil.relativedelta import relativedelta
 
+MIN_DT = pd.Timedelta(microseconds=1)
 
 def check_datetimeindex_regular(input_dataset: pd.DataFrame | pd.Series | pd.DatetimeIndex):
     if isinstance(input_dataset, (pd.DataFrame, pd.Series)):

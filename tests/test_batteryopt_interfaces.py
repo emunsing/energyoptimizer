@@ -93,11 +93,11 @@ class TestScenarioSpec:
 
     default_tariff_spec = TariffSpec(rate_code="PGE_B_19_R")
     default_design_spec = DesignSpec(solar_data_source="upload",
-                                     solar_data=one_year_site_data['solar'],
+                                     solar_data=one_year_site_data[['solar']],
                                      circuit_load_data_source="upload",
-                                     circuit_load_data=one_year_site_data['der_subpanel_load'],
+                                     circuit_load_data=one_year_site_data[['der_subpanel_load']],
                                      non_circuit_load_data_source="upload",
-                                     non_circuit_load_data=one_year_site_data['main_panel_load']
+                                     non_circuit_load_data=one_year_site_data[['main_panel_load']]
                                      )
     default_financial_spec = FinancialSpec()
     default_general_assumptions = GeneralAssumptions(start_date='2026-01-01',
@@ -135,10 +135,8 @@ class TestScenarioSpec:
         financial_inputs = self.default_scenario_spec.build_financial_model_inputs()
         
         assert isinstance(financial_inputs, FinancialModelInputs)
-        assert financial_inputs.study_years == 15
-        assert financial_inputs.discount_rate == 0.08
-        assert financial_inputs.solar_capital_cost_per_unit == 2500.0
-        assert financial_inputs.battery_capital_cost_per_unit == 800.0
+        assert financial_inputs.study_years == self.default_general_assumptions.study_years
+        assert financial_inputs.discount_rate == self.default_financial_spec.discount_rate
 
 
     def test_optimization_runner_inputs(self):
@@ -147,7 +145,7 @@ class TestScenarioSpec:
 
         # Create OptimizationRunnerInputs
         runner_inputs = OptimizationRunnerInputs(
-            optimization_type=OptimizationType.SELF_CONSUMPTION,
+            optimization_type=OptimizationType.SIMPLE_SELF_CONSUMPTION,
             optimization_start=self.default_general_assumptions.start_date,
             optimization_end=self.default_general_assumptions.end_date,
             design_inputs=design_inputs,
@@ -155,4 +153,6 @@ class TestScenarioSpec:
         )
 
         assert isinstance(runner_inputs, OptimizationRunnerInputs)
+
+
 

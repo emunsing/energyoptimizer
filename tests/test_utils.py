@@ -52,10 +52,12 @@ def sample_site_data(start_date, end_date, freq, tz='US/Pacific') -> pd.DataFram
     return site_data
 
 
-def site_data_and_tariff_model(start_date, end_date, freq):
+def simple_optimization_inputs(start_date, end_date, freq):
     site_data = sample_site_data(start_date, end_date, freq)
     tariff_model = TariffModel('tariffs.yaml', 'PGE_B_19_R', start_date, end_date, output_freq=freq)
     return OptimizationInputs(
+        start=start_date,
+        end=end_date,
         site_data=site_data,
         tariff_model=tariff_model,
         batt_rt_eff=0.85,

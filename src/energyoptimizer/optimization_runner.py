@@ -2,15 +2,17 @@ import pandas as pd
 import enum
 from typing import Optional, TYPE_CHECKING
 import attrs
-from .optimizers import tou_optimization, self_consumption, tou_endogenous_sizing_optimization, OptimizationInputs, OptimizerOutputs
+from .optimizers import tou_optimization, subpanel_self_consumption, single_panel_self_consumption, tou_endogenous_sizing_optimization, OptimizationInputs, OptimizerOutputs
 
 from .batteryopt_interface import DesignInputs, FinancialModelInputs, OptimizationType, OptimizationClock, OptimizationRunnerInputs
 
+from src.energyoptimizer.batteryopt_utils import MIN_DT
 
 
 # Global mapping of optimization types to their functions
 OPTIMIZER_FUNCTIONS = {
-    OptimizationType.SELF_CONSUMPTION: self_consumption,
+    OptimizationType.SIMPLE_SELF_CONSUMPTION: single_panel_self_consumption,
+    OptimizationType.SUBPANEL_SELF_CONSUMPTION: subpanel_self_consumption,
     OptimizationType.TOU_OPTIMIZATION: tou_optimization,
     OptimizationType.TOU_ENDOGENOUS_SIZING: tou_endogenous_sizing_optimization
 }
@@ -26,12 +28,11 @@ class OptimizationRunner:
     Return the results
     """
     
-    def __init__(self, inputs: OptimizationRunnerInputs, design_inputs: 'DesignInputs', 
-                 financial_model_inputs: 'FinancialModelInputs'):
+    def __init__(self, inputs: OptimizationRunnerInputs):
         """Initialize the OptimizationRunner with required inputs."""
         self.inputs = inputs
-        self.design_inputs = design_inputs
-        self.financial_model_inputs = financial_model_inputs
+        self.financial_model_inputs: FinancialModelInputs = inputs.financial_model_inputs
+        self.design_inputs: DesignInputs = inputs.design_inputs
         
     def run_optimization(self) -> OptimizerOutputs:
         """
@@ -52,45 +53,47 @@ class OptimizationRunner:
         site_data = self._prepare_site_data()
         
         # Prepare tariff model
-        tariff_model = self.design_inputs.tariff_model
+        tariff_model = self.inputs.design_inputs.tariff_model
         
         # Run optimization for each interval
-        all_results = []
-        all_sizing_results = {}
+        optimization_results = OptimizerOutputs()
         
         for optimize_at, data_from, data_until in intervals:
             # Extract data for this interval
-            interval_data = site_data.loc[data_from:data_until]
-            
+            full_visible_interval_data = site_data.loc[data_from:data_until - MIN_DT]
+
+            ### IMPORTANT NOTE: ####
+            # Any forecasting or pre-processing which requires lookback/horizon info should be done here if
+            # After this, all data should be aligned to the optimization index, and reflect the point-in-time knowledge at optimize_at
+            ########################
+
+            # At this point, all data should be aligned to the optimization index, and reflect the point-in-time knowledge at optimize_at
+            interval_data = site_data.loc[optimize_at:data_until - MIN_DT]
+
             # Create optimization inputs
             opt_inputs = OptimizationInputs(
+                start=optimize_at,
+                end=data_until,
                 site_data=interval_data,
                 tariff_model=tariff_model,
                 batt_rt_eff=self.design_inputs.batt_rt_eff,
                 batt_block_e_max=self.design_inputs.batt_block_e_max,
                 batt_block_p_max=self.design_inputs.batt_block_p_max,
                 backup_reserve=self.design_inputs.backup_reserve,
-                circuit_import_kw_limit=self.design_inputs.circuit_import_kw_limit,
-                circuit_export_kw_limit=self.design_inputs.circuit_export_kw_limit,
+                der_subpanel_import_kw_limit=self.design_inputs.der_subpanel_import_kw_limit,
+                der_subpanel_export_kw_limit=self.design_inputs.der_subpanel_export_kw_limit,
                 site_import_kw_limit=self.design_inputs.site_import_kw_limit,
                 site_export_kw_limit=self.design_inputs.site_export_kw_limit
             )
             
             # Run the appropriate optimizer
             optimizer_output = self._run_optimizer(opt_inputs)
-            all_results.append(optimizer_output.get_results())
-            
-            # Collect sizing results if available
-            if optimizer_output.get_sizing_results():
-                all_sizing_results.update(optimizer_output.get_sizing_results())
-        
-        # Combine results if multiple intervals
-        if len(all_results) == 1:
-            combined_results = all_results[0]
-        else:
-            combined_results = pd.concat(all_results).sort_index()
-        
-        return OptimizerOutputs(combined_results, all_sizing_results)
+            optimization_results.append(optimizer_output)
+
+        # Combine all results and trim to the optimization period (results could be longer if `horizon` > 0)
+        optimization_results.finalize(self.inputs.optimization_start, self.inputs.optimization_end)
+
+        return optimization_results
     
     def _prepare_site_data(self) -> pd.DataFrame:
         """Prepare site data from design inputs."""

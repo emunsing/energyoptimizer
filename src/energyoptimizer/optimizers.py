@@ -6,7 +6,7 @@ import time
 import scipy.sparse as sps
 
 # from .batteryopt_interface import TariffModel  # Commented out due to incomplete implementation
-
+from src.energyoptimizer.batteryopt_utils import MIN_DT
 
 @attrs.define
 class OptimizationInputs:
@@ -20,6 +20,8 @@ class OptimizationInputs:
     grid <-> main_panel <-> der_subpanel: solar, battery, der_subpanel_load
 
     """
+    start: pd.Timestamp
+    end: pd.Timestamp
     site_data: pd.DataFrame  # Columns: solar, circuit_load, non_circuit_load
     tariff_model: 'object'  # Any object with get_tariff_data method
     batt_rt_eff: float = 0.85
@@ -40,9 +42,11 @@ class OptimizationInputs:
 @attrs.define
 class OptimizerOutputs:
     """Standardized output format for all optimizers."""
-    results_df: pd.DataFrame
-    status: str | None = None
+    results_df: pd.DataFrame | None = attrs.field(default=None)
+    status: str | None = attrs.field(default=None)
     sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": 1, "n_solar": 1})
+    _intermediate_sizing_results = attrs.field(init=False, factory=lambda: {"n_batt_blocks": [], "n_solar": []})
+    _intermediate_status_list = attrs.field(init=False, factory=list)
 
     def get_results(self) -> pd.DataFrame:
         """Get the optimization results DataFrame."""
@@ -51,6 +55,35 @@ class OptimizerOutputs:
     def get_sizing_results(self) -> dict:
         """Get sizing results if available (for endogenous sizing optimizers)."""
         return self.sizing_results
+
+    def append(self, new_results: 'OptimizerOutputs'):
+        if self.results_df is None:
+            # Assume this is a cold start; we should just return the new results
+            self.results_df = new_results.results_df
+            self.status = new_results.status
+            self.sizing_results = new_results.sizing_results
+        else:
+            new_results_start_at = new_results.results_df.index[0]
+            keep_results = self.results_df.loc[:new_results_start_at - MIN_DT, :]
+            self.results_df = pd.concat([keep_results, new_results.results_df])
+
+            self._intermediate_status_list += [new_results.status]
+            self.status = new_results.status
+
+            assert sorted(self.sizing_results.keys()) == sorted(new_results.sizing_results.keys()), "Incompatible sizing results keys"
+            for k, v in new_results.sizing_results.items():
+                self._intermediate_sizing_results[k] += [v]
+            self.sizing_results = new_results.sizing_results
+
+    def trim(self, start_time, end_time):
+        if self.results_df is not None:
+            self.results_df = self.results_df.loc[start_time:end_time, :]
+
+    def finalize(self, start_time, end_time):
+        self.trim(start_time, end_time)
+        self.status = self._intermediate_status_list[-1]  # No-op for now
+        for k, v in self._intermediate_sizing_results.items():
+            self.sizing_results[k] = np.mean(v)
 
 
 def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
@@ -63,7 +96,7 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
     export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
 
-    tariff = opt_inputs.tariff_model.tariff_timeseries
+    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
 
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
@@ -143,7 +176,7 @@ def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOu
     """
     # Extract parameters from OptimizationInputs
     site_data = opt_inputs.site_data
-    tariff = opt_inputs.tariff_model.tariff_timeseries
+    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
@@ -225,7 +258,7 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
     """
     # Extract parameters from OptimizationInputs
     site_data = opt_inputs.site_data
-    tariff = opt_inputs.tariff_model.tariff_timeseries
+    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
@@ -342,7 +375,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     
     """Assumes that solar data in the site_data is per kW"""
     simulation_years = (site_data.index[-1] - site_data.index[0]).total_seconds() / (365 * 24 * 60 * 60)
-    tariff = opt_inputs.tariff_model.tariff_timeseries
+    tariff = opt_inputs.tariff_model.tariff_timeseries(start=site_data.index[0], end=site_data.index[-1])
 
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()

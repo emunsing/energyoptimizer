@@ -18,17 +18,10 @@ class TestSubpanelSelfConsumption:
     
     @pytest.fixture
     def mock_tariff_model(self):
-        """Create a mock tariff model for testing."""
-        # Create a simple mock that has the required tariff_timeseries attribute
-        class MockTariffModel:
-            def __init__(self):
-                # Create a minimal tariff timeseries for a single timestep
-                self.tariff_timeseries = pd.DataFrame({
-                    'energy_import_rate_kwh': [0.25],  # $0.25/kWh
-                    'energy_export_rate_kwh': [0.10]   # $0.10/kWh
-                }, index=pd.DatetimeIndex(['2025-01-01 12:00:00'], tz='US/Pacific'))
-        
-        return MockTariffModel()
+        return TariffModel('tariffs.yaml', 'PGE_B_19_R',
+                           start_date=pd.Timestamp('2025-01-01', tz='US/Pacific'),
+                           end_date=pd.Timestamp('2025-02-01', tz='US/Pacific')
+                           )
     
     def create_optimization_inputs_from_test_case(self, test_case, mock_tariff_model):
         """Create OptimizationInputs from a single test case row."""
@@ -43,6 +36,8 @@ class TestSubpanelSelfConsumption:
         
         # Create OptimizationInputs with parameters from test case
         opt_inputs = OptimizationInputs(
+            start=timestamp[0],
+            end=timestamp[0] + pd.Timedelta(minutes=30),
             site_data=site_data,
             tariff_model=mock_tariff_model,
             batt_rt_eff=1.00,  # Fixed for all test cases
