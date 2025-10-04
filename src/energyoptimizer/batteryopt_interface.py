@@ -567,6 +567,7 @@ class OptimizationType(enum.Enum):
     TOU_OPTIMIZATION = "tou_optimization"
     TOU_ENDOGENOUS_SIZING = "tou_endogenous_sizing"
     DEMAND_CHARGE_TOU_OPTIMIZATION = "demand_charge_tou_optimization"
+    DEMAND_CHARGE_TOU_SIZING_OPTIMIZATION = "demand_charge_tou_endogenous_sizing"
 
 
 @attrs.define

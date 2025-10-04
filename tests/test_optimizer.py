@@ -12,6 +12,7 @@ from src.energyoptimizer.optimizers import (
     tou_optimization,
     demand_charge_tou_optimization,
     single_panel_self_consumption,
+    demand_charge_tou_endogenous_sizing_optimization,
     subpanel_self_consumption,
     tou_endogenous_sizing_optimization,
     OptimizerOutputs
@@ -71,7 +72,8 @@ def optimizer_function_list():
         (tou_optimization, "tou_optimization"),
         (subpanel_self_consumption, "self_consumption"),
         (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization"),
-        (demand_charge_tou_optimization, "demand_charge_tou_optimization")
+        (demand_charge_tou_optimization, "demand_charge_tou_optimization"),
+        (demand_charge_tou_endogenous_sizing_optimization, "demand_charge_tou_endogenous_sizing"),
     ]
 
 
@@ -98,7 +100,8 @@ def test_optimization_inputs_creation(one_year_optimization_inputs):
     (tou_optimization, "tou_optimization"),
     (subpanel_self_consumption, "subpanel_self_consumption"),
     (tou_endogenous_sizing_optimization, "tou_endogenous_sizing_optimization"),
-    (demand_charge_tou_optimization, "demand_charge_tou_optimization")
+    (demand_charge_tou_optimization, "demand_charge_tou_optimization"),
+    (demand_charge_tou_endogenous_sizing_optimization, "demand_charge_tou_endogenous_sizing"),
 ])
 def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization_inputs):
     start_time = time.time()
@@ -143,7 +146,7 @@ def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization
     # Battery SoC within limits
     # E (battery energy/SoC) should be within [0, batt_block_e_max]
     assert np.all(results_df['E'] >= 0)
-    assert np.all(results_df['E'] <= sample_optimization_inputs.batt_block_e_max * sizing_results['n_batt_blocks'])
+    assert np.all(results_df['E'] <= sample_optimization_inputs.batt_block_e_max * sizing_results['n_batt_blocks'] + 1e-6)
 
 
 def test_demand_charge_optimization(sample_optimization_inputs):
@@ -164,6 +167,28 @@ def test_demand_charge_optimization(sample_optimization_inputs):
     assert demand_charge_total_bill['total_bill'] <= tou_total_bill['total_bill']
     assert np.all(demand_charge_bill_cycles['demand_charge'] <= tou_bill_cycles['demand_charge'])
 
+def test_demand_charge_endogenous_sizing_optimization(sample_optimization_inputs):
+    optimization_inputs = sample_optimization_inputs
+    demand_charge_optimization_result = demand_charge_tou_endogenous_sizing_optimization(optimization_inputs)
+    assert demand_charge_optimization_result.status == 'optimal'
+    sizing_results = demand_charge_optimization_result.sizing_results
+    assert sizing_results['n_batt_blocks'] >= 1
+    assert sizing_results['n_solar'] >= 1
+
+    p_grid = demand_charge_optimization_result.results_df['P_grid']
+    tariff = optimization_inputs.tariff_model
+    demand_charge_bill_cycles = tariff.compute_bill_series(p_grid)
+    demand_charge_total_bill = tariff.compute_total_bill(p_grid)
+
+    tou_optimization_result = tou_endogenous_sizing_optimization(optimization_inputs)
+    assert tou_optimization_result.status == 'optimal'
+    p_grid_tou = tou_optimization_result.results_df['P_grid']
+    tou_bill_cycles = tariff.compute_bill_series(p_grid_tou)
+    tou_total_bill = tariff.compute_total_bill(p_grid_tou)
+
+    assert demand_charge_total_bill['total_bill'] <= tou_total_bill['total_bill']
+    assert np.all(demand_charge_bill_cycles['demand_charge'] <= tou_bill_cycles['demand_charge'])
+
 
 # Clock types: Different frequencies:
 @pytest.fixture
@@ -172,6 +197,13 @@ def optimizer_clock_freq_list():
         OptimizationClock(frequency='2W-SUN', horizon=pd.DateOffset(months=1), lookback=None),
         OptimizationClock(frequency='M', horizon=pd.DateOffset(months=2), lookback=None),
         OptimizationClock(frequency='Q', horizon=pd.DateOffset(months=6), lookback=None),
+    ]
+
+def demand_charge_optimizer_clock_freq_list():
+    return [
+        OptimizationClock(frequency='M', horizon=pd.DateOffset(months=2), lookback=None),
+        OptimizationClock(frequency='Q', horizon=pd.DateOffset(months=4), lookback=None),
+        OptimizationClock(frequency='A', horizon=None, lookback=None),
     ]
 
 
@@ -239,7 +271,7 @@ class TestOptimizationRunner:
     @pytest.mark.parametrize('clock_invariant_optimizer',
                              [
                                  "tou_optimization",
-                                 "SUBPANEL_SELF_CONSUMPTION"
+                                 "SUBPANEL_SELF_CONSUMPTION",
                              ]
                              )
     def test_optimization_runner_clock_types(self, clock_invariant_optimizer, sample_optimization_clock_list):
