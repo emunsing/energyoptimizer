@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
+from dateutil.relativedelta import relativedelta
 from unittest.mock import Mock, MagicMock
 
 from src.energyoptimizer.scenario_runner import (
@@ -82,11 +83,11 @@ def short_scenario_spec():
     """Short scenario spec for fast testing."""
     return SharedTestFixtures.create_default_scenario_spec(
         start_date='2026-01-01',
-        end_date='2026-06-01',
+        end_date='2026-03-01',
         min_battery_units=1, 
-        max_battery_units=2,
+        max_battery_units=5,
         min_solar_units=1, 
-        max_solar_units=3
+        max_solar_units=5
     )
 
 @pytest.fixture
@@ -195,182 +196,64 @@ class TestBasicResultSummarizer:
         assert result.optimization_status == 'optimal'
 
 
-class TestScenarioRunner:
-    """Test the base ScenarioRunner class."""
-    
-    def test_scenario_runner_initialization(self, short_scenario_spec):
-        """Test ScenarioRunner initialization."""
-        # Can't instantiate abstract class directly, so test via subclass
-        runner = SizingSweepScenarioRunner(
-            general_assumptions=short_scenario_spec.general_assumptions,
-            design_spec=short_scenario_spec.design_spec,
-            tariff_spec=short_scenario_spec.tariff_spec,
-            financial_spec=short_scenario_spec.financial_spec,
-            n_batt_min=1, n_batt_max=2,
-            solar_min=1, solar_max=2
-        )
-        
-        assert runner.scenario_spec.general_assumptions == short_scenario_spec.general_assumptions
-        assert runner.scenario_spec.design_spec == short_scenario_spec.design_spec
-        assert runner.scenario_spec.tariff_spec == short_scenario_spec.tariff_spec
-        assert runner.scenario_spec.financial_spec == short_scenario_spec.financial_spec
-        assert runner.design_inputs is not None
-        assert runner.financial_inputs is not None
-        assert runner.tariff_model is not None
-        assert runner.optimizer_results == []
-        assert runner.result_summaries == []
+@pytest.mark.slow
+def test_scenario_dispatch_small_sweep(short_scenario_spec):
+    scenario_spec = short_scenario_spec
+    """Test scenario dispatch with a small sweep."""
+    runner = SizingSweepScenarioRunner(
+        general_assumptions=scenario_spec.general_assumptions,
+        design_spec=scenario_spec.design_spec,
+        tariff_spec=scenario_spec.tariff_spec,
+        financial_spec=scenario_spec.financial_spec,
+    )
 
+    runner.run_scenarios()
+    optimizer_results = runner.get_optimizer_results()
+    result_summaries = runner.get_result_summaries()
+    n_battery_options = scenario_spec.design_spec.max_battery_units - scenario_spec.design_spec.min_battery_units + 1
+    n_solar_options = scenario_spec.design_spec.max_solar_units - scenario_spec.design_spec.min_solar_units + 1
 
-class TestSizingSweepScenarioRunner:
-    """Test the SizingSweepScenarioRunner class."""
-    
-    def test_sizing_sweep_initialization(self, short_scenario_spec):
-        """Test SizingSweepScenarioRunner initialization."""
-        runner = SizingSweepScenarioRunner(
-            general_assumptions=short_scenario_spec.general_assumptions,
-            design_spec=short_scenario_spec.design_spec,
-            tariff_spec=short_scenario_spec.tariff_spec,
-            financial_spec=short_scenario_spec.financial_spec,
-            n_batt_min=1, n_batt_max=2,
-            solar_min=1, solar_max=2
-        )
-        
-        assert runner.n_batt_min == 1
-        assert runner.n_batt_max == 2
-        assert runner.solar_min == 1
-        assert runner.solar_max == 2
-    
-    def test_create_modified_scenario_spec(self, short_scenario_spec):
-        """Test creation of modified scenario specs."""
-        runner = SizingSweepScenarioRunner(
-            general_assumptions=short_scenario_spec.general_assumptions,
-            design_spec=short_scenario_spec.design_spec,
-            tariff_spec=short_scenario_spec.tariff_spec,
-            financial_spec=short_scenario_spec.financial_spec,
-            n_batt_min=1, n_batt_max=2,
-            solar_min=1, solar_max=2
-        )
-        
-        modified_spec = runner._create_modified_scenario_spec(n_batt=2, solar_size=3)
-        
-        assert modified_spec.design_spec.min_battery_units == 2
-        assert modified_spec.design_spec.max_battery_units == 2
-        assert modified_spec.design_spec.min_solar_units == 3
-        assert modified_spec.design_spec.max_solar_units == 3
-    
-    @pytest.mark.slow
-    def test_scenario_dispatch_small_sweep(self, short_scenario_spec):
-        """Test scenario dispatch with a small sweep."""
-        runner = SizingSweepScenarioRunner(
-            general_assumptions=short_scenario_spec.general_assumptions,
-            design_spec=short_scenario_spec.design_spec,
-            tariff_spec=short_scenario_spec.tariff_spec,
-            financial_spec=short_scenario_spec.financial_spec,
-            n_batt_min=1, n_batt_max=1,  # Only 1 battery option
-            solar_min=1, solar_max=1     # Only 1 solar option
-        )
-        
-        # Mock the OptimizationRunner to avoid actual optimization
-        with pytest.Mock() as mock_runner:
-            mock_result = OptimizerOutputs(
-                results_df=pd.DataFrame({'P_batt': [0], 'P_grid': [1]}, 
-                                       index=pd.date_range('2023-01-01', periods=1, freq='H')),
-                status='optimal'
-            )
-            mock_runner.run_optimization.return_value = mock_result
-            
-            # This would normally call the real optimizer, but we're mocking it
-            # For now, just test that the structure is correct
-            assert runner.scenario_spec is not None
+    assert len(result_summaries) == n_battery_options * n_solar_options
+    for i, summary in enumerate(result_summaries):
+        assert isinstance(summary, ResultSummary)
+        assert summary.optimization_status == 'optimal'
+        rd = relativedelta(summary.combined_timeseries.index[-1], summary.combined_timeseries.index[0])
+        billing_months = rd.years * 12 + rd.months + int(rd.days > 0)
+        billing_years = rd.years + int(rd.months > 0 or rd.days > 0)
+        assert len(summary.billing_cycles) == billing_months
+        assert len(summary.annual_financial_timeseries) == billing_years
+        assert len(summary.annual_nonfinancial_timeseries) == billing_years
 
+    print("Done")
 
-class TestTopNScenarioRunner:
-    """Test the TopNScenarioRunner class."""
-    
-    def test_topn_initialization(self, medium_scenario_spec):
-        """Test TopNScenarioRunner initialization."""
-        runner = TopNScenarioRunner(
-            general_assumptions=medium_scenario_spec.general_assumptions,
-            design_spec=medium_scenario_spec.design_spec,
-            tariff_spec=medium_scenario_spec.tariff_spec,
-            financial_spec=medium_scenario_spec.financial_spec,
-            n_closest=5
-        )
-        
-        assert runner.n_closest == 5
-        assert runner.endogenous_result is None
-    
-    def test_create_modified_scenario_spec(self, medium_scenario_spec):
-        """Test creation of modified scenario specs."""
-        runner = TopNScenarioRunner(
-            general_assumptions=medium_scenario_spec.general_assumptions,
-            design_spec=medium_scenario_spec.design_spec,
-            tariff_spec=medium_scenario_spec.tariff_spec,
-            financial_spec=medium_scenario_spec.financial_spec,
-            n_closest=3
-        )
-        
-        modified_spec = runner._create_modified_scenario_spec(n_batt=3, solar_size=7)
-        
-        assert modified_spec.design_spec.min_battery_units == 3
-        assert modified_spec.design_spec.max_battery_units == 3
-        assert modified_spec.design_spec.min_solar_units == 7
-        assert modified_spec.design_spec.max_solar_units == 7
+@pytest.mark.slow
+def test_topn_scenario_runner(short_scenario_spec):
+    """Test TopNScenarioRunner initialization."""
+    scenario_spec = short_scenario_spec
+    n_closest = 3
+    runner = TopNScenarioRunner(
+        general_assumptions=scenario_spec.general_assumptions,
+        design_spec=scenario_spec.design_spec,
+        tariff_spec=scenario_spec.tariff_spec,
+        financial_spec=scenario_spec.financial_spec,
+        n_closest=n_closest
+    )
 
+    runner.run_scenarios()
+    optimizer_results = runner.get_optimizer_results()
+    result_summaries = runner.get_result_summaries()
 
-class TestIntegration:
-    """Integration tests for the scenario runner system."""
-    
-    def test_result_summarizer_protocol(self):
-        """Test that BasicResultSummarizer implements the ResultSummarizer protocol."""
-        summarizer = BasicResultSummarizer()
-        
-        # Should have the required summarize method
-        assert hasattr(summarizer, 'summarize')
-        assert callable(getattr(summarizer, 'summarize'))
-    
-    def test_scenario_runner_composability(self):
-        """Test that scenario runners can use different result summarizers."""
-        # Create a custom summarizer
-        class CustomSummarizer:
-            def summarize(self, optimizer_results, design_inputs, financial_inputs, tariff_model):
-                return ResultSummary(optimization_status='custom')
-        
-        # This should work with any scenario runner
-        custom_summarizer = CustomSummarizer()
-        
-        # The interface should be compatible
-        assert hasattr(custom_summarizer, 'summarize')
-        assert callable(getattr(custom_summarizer, 'summarize'))
-    
-    def test_parallelization_support(self, short_scenario_spec):
-        """Test that parallelization can be enabled/disabled."""
-        # Test with parallelization disabled
-        runner_seq = SizingSweepScenarioRunner(
-            general_assumptions=short_scenario_spec.general_assumptions,
-            design_spec=short_scenario_spec.design_spec,
-            tariff_spec=short_scenario_spec.tariff_spec,
-            financial_spec=short_scenario_spec.financial_spec,
-            n_batt_min=1, n_batt_max=1,
-            solar_min=1, solar_max=1,
-            parallelize=False
-        )
-        
-        # Test with parallelization enabled
-        runner_par = SizingSweepScenarioRunner(
-            general_assumptions=short_scenario_spec.general_assumptions,
-            design_spec=short_scenario_spec.design_spec,
-            tariff_spec=short_scenario_spec.tariff_spec,
-            financial_spec=short_scenario_spec.financial_spec,
-            n_batt_min=1, n_batt_max=1,
-            solar_min=1, solar_max=1,
-            parallelize=True,
-            n_processes=2
-        )
-        
-        assert runner_seq.parallelize == False
-        assert runner_par.parallelize == True
-        assert runner_par.n_processes == 2
+    assert len(result_summaries) == n_closest  # 2 battery options * 2 solar options
+    for i, summary in enumerate(result_summaries):
+        assert isinstance(summary, ResultSummary)
+        assert summary.optimization_status == 'optimal'
+        rd = relativedelta(summary.combined_timeseries.index[-1], summary.combined_timeseries.index[0])
+        billing_months = rd.years * 12 + rd.months + int(rd.days > 0)
+        billing_years = rd.years + int(rd.months > 0 or rd.days > 0)
+        assert len(summary.billing_cycles) == billing_months
+        assert len(summary.annual_financial_timeseries) == billing_years
+        assert len(summary.annual_nonfinancial_timeseries) == billing_years
+
 
 
 if __name__ == "__main__":

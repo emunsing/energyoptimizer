@@ -15,7 +15,6 @@ from src.energyoptimizer.optimization_runner import OptimizationRunnerInputs, Op
 
 TZ = 'US/Pacific'
 
-
 class TestDesignSpec:
     """Test DesignSpec methods for building timeseries data."""
     time_index = pd.date_range('2025-01-01', '2044-12-31 23:59', tz=TZ, freq='1H')

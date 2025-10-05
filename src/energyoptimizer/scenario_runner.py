@@ -120,20 +120,6 @@ class BasicResultSummarizer:
             optimization_status=optimizer_results.status,
             financial_summary=financial_summary
         )
-    
-    def _create_combined_timeseries(self, results_df: pd.DataFrame, 
-                                  design_inputs: DesignInputs, 
-                                  tariff_model: TariffModel) -> pd.DataFrame:
-        """Create combined timeseries from optimizer results, site data, and tariff."""
-        # Combine optimizer results with site data
-        combined = pd.concat([
-            results_df,
-            design_inputs.site_data,
-            tariff_model.tariff_timeseries
-        ], axis=1)
-        
-        return combined
-
 
     def _create_annual_nonfinancial_timeseries(self, results_df: pd.DataFrame,
                                 design_inputs: DesignInputs, 
@@ -173,7 +159,8 @@ class BasicResultSummarizer:
         annual_data_df = pd.DataFrame.from_dict(annual_data, orient='columns').resample('1YS').sum()
         return annual_data_df
 
-    def _create_annual_financial_timeseries(self, optimization_results: OptimizerOutputs,
+    @staticmethod
+    def _create_annual_financial_timeseries(optimization_results: OptimizerOutputs,
                                            tariff_model: TariffModel,
                                              financial_inputs: FinancialModelInputs
                                            ) -> pd.DataFrame:
@@ -208,12 +195,14 @@ class BasicResultSummarizer:
         combined_annual_financials.index = pd.DatetimeIndex(combined_annual_financials.index)
 
         return combined_annual_financials
-    
-    def _compute_summary_stats(self, annual_timeseries: pd.DataFrame) -> pd.Series:
+
+    @staticmethod
+    def _compute_summary_stats(annual_timeseries: pd.DataFrame) -> pd.Series:
         """Compute average values from annual timeseries."""
         return annual_timeseries.mean()
-    
-    def _extract_financial_summary(self, financial_inputs: FinancialModelInputs,
+
+    @staticmethod
+    def _extract_financial_summary(financial_inputs: FinancialModelInputs,
                                    annual_financial_timeseries: pd.DataFrame) -> Dict[str, Any]:
         """Extract financial summary information."""
         return {
@@ -338,47 +327,7 @@ class ScenarioRunner(ABC):
 
 class SizingSweepScenarioRunner(ScenarioRunner):
     """Scenario runner that performs a Cartesian product sweep of battery and solar sizes."""
-    
-    def __init__(self, 
-                 general_assumptions: GeneralAssumptions,
-                 design_spec: DesignSpec,
-                 tariff_spec: TariffSpec,
-                 financial_spec: FinancialSpec,
-                 n_batt_min: int, n_batt_max: int,
-                 solar_min: int, solar_max: int,
-                 result_summarizer: ResultSummarizer = None,
-                 parallelize: bool = False,
-                 n_processes: int = None):
-        """
-        Initialize sizing sweep runner.
-        
-        Args:
-            general_assumptions: General assumptions for the study
-            design_spec: Design specifications
-            tariff_spec: Tariff specifications
-            financial_spec: Financial specifications
-            n_batt_min: Minimum number of battery blocks
-            n_batt_max: Maximum number of battery blocks
-            solar_min: Minimum solar size (kW)
-            solar_max: Maximum solar size (kW)
-            result_summarizer: Optional custom result summarizer
-            parallelize: Whether to run scenarios in parallel
-            n_processes: Number of processes for parallel execution (None = auto)
-        """
-        super().__init__(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec,
-            result_summarizer=result_summarizer,
-            parallelize=parallelize,
-            n_processes=n_processes
-        )
-        self.n_batt_min = n_batt_min
-        self.n_batt_max = n_batt_max
-        self.solar_min = solar_min
-        self.solar_max = solar_max
-    
+
     def _build_runner_inputs_list(self) -> List[OptimizationRunnerInputs]:
         """
         Build list of optimization runner inputs for all combinations of battery and solar sizes.
@@ -386,21 +335,24 @@ class SizingSweepScenarioRunner(ScenarioRunner):
         runner_inputs_list = []
         
         # Create Cartesian product of battery and solar sizes
-        for n_batt in range(self.n_batt_min, self.n_batt_max + 1):
-            for solar_size in range(self.solar_min, self.solar_max + 1):
+        for n_batt in range(self.design_spec.min_battery_units, self.design_spec.max_battery_units + 1):
+            for solar_size in range(self.design_spec.min_solar_units, self.design_spec.max_solar_units + 1):
                 # Create modified scenario spec with fixed sizes
-                modified_spec = self._create_modified_scenario_spec(n_batt, solar_size)
-                
+                modified_design_input = attrs.evolve(
+                    self.design_inputs,
+                    min_battery_units=n_batt,
+                    max_battery_units=n_batt,
+                    min_solar_units=solar_size,
+                    max_solar_units=solar_size
+                )
+
                 # Build inputs
-                design_inputs = modified_spec.build_design_inputs()
-                financial_inputs = modified_spec.build_financial_model_inputs()
-                
                 runner_inputs = OptimizationRunnerInputs(
                     optimization_type=OptimizationType(self.general_assumptions.optimization_type),
                     optimization_start=self.general_assumptions.start_date,
                     optimization_end=self.general_assumptions.end_date,
-                    design_inputs=design_inputs,
-                    financial_model_inputs=financial_inputs,
+                    design_inputs=modified_design_input,
+                    financial_model_inputs=self.financial_inputs,
                     optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
                     parallelize=False
                 )
@@ -408,61 +360,23 @@ class SizingSweepScenarioRunner(ScenarioRunner):
                 runner_inputs_list.append(runner_inputs)
         
         return runner_inputs_list
-    
-    def _create_modified_scenario_spec(self, n_batt: int, solar_size: int) -> ScenarioSpec:
-        """Create a modified scenario spec with fixed sizing parameters."""
-        # Create new design spec with fixed sizes
-        modified_design_spec = attrs.evolve(
-            self.scenario_spec.design_spec,
-            min_battery_units=n_batt,
-            max_battery_units=n_batt,
-            min_solar_units=solar_size,
-            max_solar_units=solar_size
-        )
-        
-        # Create new scenario spec
-        return attrs.evolve(
-            self.scenario_spec,
-            design_spec=modified_design_spec
-        )
 
 
 class TopNScenarioRunner(ScenarioRunner):
     """Scenario runner that finds the N closest scenarios to an endogenous sizing result."""
     
-    def __init__(self, 
-                 general_assumptions: GeneralAssumptions,
-                 design_spec: DesignSpec,
-                 tariff_spec: TariffSpec,
-                 financial_spec: FinancialSpec,
-                 n_closest: int,
-                 result_summarizer: ResultSummarizer = None,
-                 parallelize: bool = False,
-                 n_processes: int = None):
+    def __init__(self, *args, **kwargs):
         """
         Initialize top-N scenario runner.
-        
-        Args:
-            general_assumptions: General assumptions for the study
-            design_spec: Design specifications
-            tariff_spec: Tariff specifications
-            financial_spec: Financial specifications
+        Unique args:
             n_closest: Number of closest scenarios to run
-            result_summarizer: Optional custom result summarizer
-            parallelize: Whether to run scenarios in parallel
-            n_processes: Number of processes for parallel execution (None = auto)
         """
-        super().__init__(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec,
-            result_summarizer=result_summarizer,
-            parallelize=parallelize,
-            n_processes=n_processes
-        )
+        n_closest = kwargs.pop('n_closest', 5)
+        respect_bounds = kwargs.pop('respect_bounds', True)
+        super().__init__(*args, **kwargs)
         self.n_closest = n_closest
         self.endogenous_result = None
+        self.respect_bounds = respect_bounds
     
     def _build_runner_inputs_list(self) -> List[OptimizationRunnerInputs]:
         """
@@ -476,58 +390,40 @@ class TopNScenarioRunner(ScenarioRunner):
         optimal_point = (optimal_sizing['n_solar'], optimal_sizing['n_batt_blocks'])
         
         # Step 3: Find N closest integer points
-        closest_points = closest_n_elements(optimal_point, self.n_closest)
-        
+        if self.respect_bounds:
+            batt_size_candidates = range(self.design_spec.min_battery_units, self.design_spec.max_battery_units + 1)
+            solar_size_candidates = range(self.design_spec.min_solar_units, self.design_spec.max_solar_units + 1)
+            candidate_points = np.array([[solar, batt] for solar in solar_size_candidates for batt in batt_size_candidates])
+            distances = np.linalg.norm(candidate_points - optimal_point, axis=1)
+            idx = np.argsort(distances)[:self.n_closest]
+            closest_points = candidate_points[idx].tolist()
+        else:
+            closest_points = closest_n_elements(optimal_point, self.n_closest)
+
         # Step 4: Build runner inputs for closest points (excluding endogenous if it's integer)
         runner_inputs_list = []
         
         for solar_size, n_batt in closest_points:
-            if (solar_size, n_batt) != optimal_point:  # Skip if it's the same as endogenous
-                modified_spec = self._create_modified_scenario_spec(n_batt, solar_size)
-                
-                # Build inputs
-                design_inputs = modified_spec.build_design_inputs()
-                financial_inputs = modified_spec.build_financial_model_inputs()
-                
-                runner_inputs = OptimizationRunnerInputs(
-                    optimization_type=OptimizationType(self.general_assumptions.optimization_type),
-                    optimization_start=self.general_assumptions.start_date,
-                    optimization_end=self.general_assumptions.end_date,
-                    design_inputs=design_inputs,
-                    financial_model_inputs=financial_inputs,
-                    optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
-                    parallelize=False
-                )
-                
-                runner_inputs_list.append(runner_inputs)
-        
-        return runner_inputs_list
-    
-    def run_scenarios(self) -> List[ResultSummary]:
-        """
-        Override run_scenarios to include the endogenous result.
-        """
-        # Build list of runner inputs (this also runs endogenous sizing)
-        runner_inputs_list = self._build_runner_inputs_list()
-        
-        # Run optimizations for the closest scenarios (sequentially or in parallel)
-        closest_results = self._run_optimizations(runner_inputs_list)
-        
-        # Combine endogenous result with closest results
-        self.optimizer_results = [self.endogenous_result] + closest_results
-        
-        # Apply result summarizer to each result
-        self.result_summaries = []
-        for optimizer_result in self.optimizer_results:
-            summary = self.result_summarizer.summarize(
-                optimizer_result, 
-                self.design_inputs, 
-                self.financial_inputs, 
-                self.tariff_model
+            modified_design_input = attrs.evolve(
+                self.design_inputs,
+                min_battery_units=n_batt,
+                max_battery_units=n_batt,
+                min_solar_units=solar_size,
+                max_solar_units=solar_size
             )
-            self.result_summaries.append(summary)
-        
-        return self.result_summaries
+
+            # Build inputs
+            runner_inputs = OptimizationRunnerInputs(
+                optimization_type=OptimizationType(self.general_assumptions.optimization_type),
+                optimization_start=self.general_assumptions.start_date,
+                optimization_end=self.general_assumptions.end_date,
+                design_inputs=modified_design_input,
+                financial_model_inputs=self.financial_inputs,
+                optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
+                parallelize=False
+            )
+            runner_inputs_list.append(runner_inputs)
+        return runner_inputs_list
     
     def _run_endogenous_sizing(self) -> OptimizerOutputs:
         """Run endogenous sizing optimization to find optimal continuous sizing."""
@@ -557,23 +453,3 @@ class TopNScenarioRunner(ScenarioRunner):
         )
         
         return _run_single_optimization(runner_inputs)
-    
-    def _create_modified_scenario_spec(self, n_batt: int, solar_size: int) -> ScenarioSpec:
-        """Create a modified scenario spec with fixed sizing parameters."""
-        # Create new design spec with fixed sizes
-        modified_design_spec = attrs.evolve(
-            self.design_spec,
-            min_battery_units=n_batt,
-            max_battery_units=n_batt,
-            min_solar_units=solar_size,
-            max_solar_units=solar_size
-        )
-        
-        # Create new scenario spec
-        return ScenarioSpec(
-            general_assumptions=self.general_assumptions,
-            design_spec=modified_design_spec,
-            tariff_spec=self.tariff_spec,
-            financial_spec=self.financial_spec
-        )
-

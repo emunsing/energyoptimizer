@@ -5,6 +5,8 @@ from dateutil.relativedelta import relativedelta
 
 MIN_DT = pd.Timedelta(microseconds=1)
 
+SUCCESS_STATUS = ['optimal', 'feasible']
+
 def check_datetimeindex_regular(input_dataset: pd.DataFrame | pd.Series | pd.DatetimeIndex):
     if isinstance(input_dataset, (pd.DataFrame, pd.Series)):
         input_dataset = input_dataset.index
