@@ -475,6 +475,8 @@ class GeneralAssumptions:
     optimization_type: str = 'self_consumption'  # 'self_consumption', 'tou_optimization', 'tou_endogenous_sizing'
     study_resolution: str = '1H'  # e.g., '1H', '15T'
     end_date: Optional[pd.Timestamp | str] = None
+    parallelize: bool = False
+    optimization_clock: str = 'single'
 
     def __attrs_post_init__(self):
         if self.start_date is None:
