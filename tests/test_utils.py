@@ -3,6 +3,7 @@ import pandas as pd
 
 from src.energyoptimizer.optimizers import OptimizationInputs
 from src.energyoptimizer.tariff.tariff_utils import TariffModel
+from src.energyoptimizer.batteryopt_utils import MIN_DT
 
 
 def ensure_tzinfo(t, tz):
@@ -20,7 +21,7 @@ def sample_site_data(start_date, end_date, freq, tz='US/Pacific') -> pd.DataFram
     start_date = ensure_tzinfo(start_date, tz=tz)
     end_date = ensure_tzinfo(end_date, tz=tz)
 
-    index = pd.date_range(start=start_date, end=end_date, freq=freq)
+    index = pd.date_range(start=start_date, end=end_date - MIN_DT, freq=freq)
 
     # Create realistic solar and load profiles
     n_periods = len(index)

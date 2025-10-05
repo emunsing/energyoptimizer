@@ -7,6 +7,10 @@ from dateutil.relativedelta import relativedelta
 from .batteryopt_utils import shift_copy_dataset_to_new_index
 from pandas.tseries.frequencies import to_offset
 
+PRODUCT_TO_SIZING_OUTPUT_MAP = {'battery': 'n_batt_blocks',
+                                'solar': 'n_solar'
+                                }
+
 @attrs.define
 class DesignInputs:
     """

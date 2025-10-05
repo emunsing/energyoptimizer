@@ -7,7 +7,9 @@ from multiprocessing import Pool
 from functools import partial
 
 from .optimizers import OptimizerOutputs
-from .batteryopt_interface import DesignInputs, FinancialModelInputs, ScenarioSpec, OptimizationType, OptimizationRunnerInputs, OptimizationClock, GeneralAssumptions, DesignSpec, TariffSpec, FinancialSpec
+from .batteryopt_interface import (DesignInputs, FinancialModelInputs, ScenarioSpec, OptimizationType,
+                                   OptimizationRunnerInputs, OptimizationClock, GeneralAssumptions,
+                                   DesignSpec, TariffSpec, FinancialSpec, PRODUCT_TO_SIZING_OUTPUT_MAP)
 from .optimization_runner import OptimizationRunner
 from .tariff.tariff_utils import TariffModel
 
@@ -86,7 +88,7 @@ class ResultSummarizer(Protocol):
 class BasicResultSummarizer:
     """Basic implementation of ResultSummarizer that creates comprehensive summaries."""
     
-    def summarize(self, 
+    def summarize(self,
                  optimizer_results: OptimizerOutputs,
                  design_inputs: DesignInputs, 
                  financial_inputs: FinancialModelInputs,
@@ -95,8 +97,11 @@ class BasicResultSummarizer:
         Create a comprehensive summary of optimization results.
         """
         results_df = optimizer_results.results_df
-        combined_timeseries = self._create_combined_timeseries(results_df, design_inputs, tariff_model)
-        billing_cycles = self._compute_billing_cycles(results_df, tariff_model)
+        combined_timeseries = pd.concat([results_df,
+                                         design_inputs.site_data,
+                                         tariff_model.tariff_timeseries
+                                         ], axis=1).loc[results_df.index]
+        billing_cycles = tariff_model.compute_bill_series(results_df['P_grid'])
         annual_financial_timeseries = self._create_annual_financial_timeseries(optimization_results=optimizer_results,
                                                                                tariff_model=tariff_model,
                                                                                financial_inputs=financial_inputs)
@@ -128,10 +133,7 @@ class BasicResultSummarizer:
         ], axis=1)
         
         return combined
-    
-    def _compute_billing_cycles(self, results_df: pd.DataFrame, tariff_model: TariffModel) -> pd.DataFrame:
-        """Compute billing cycle data from tariff model."""
-        return tariff_model.compute_bill_series(results_df['P_grid'])
+
 
     def _create_annual_nonfinancial_timeseries(self, results_df: pd.DataFrame,
                                 design_inputs: DesignInputs, 
@@ -168,34 +170,42 @@ class BasicResultSummarizer:
                 annual_data[f'grid_imports_{col}_kwh'] = (results_df['P_grid'].clip(lower=0) * mask * dt_hours)
 
         # Concatenate existent dataframes
-        annual_data_df = pd.DataFrame.from_dict(annual_data, orient='columns').resample('1Y').sum()
+        annual_data_df = pd.DataFrame.from_dict(annual_data, orient='columns').resample('1YS').sum()
         return annual_data_df
 
     def _create_annual_financial_timeseries(self, optimization_results: OptimizerOutputs,
                                            tariff_model: TariffModel,
                                              financial_inputs: FinancialModelInputs
                                            ) -> pd.DataFrame:
-        annual_financial_data: list[tuple[str, str], pd.Series] = []
-
-        annual_billing_cycles = self._compute_billing_cycles(results_df, tariff_model).resample('1Y').sum()
+        results_df = optimization_results.results_df
+        billing_cycle_data = tariff_model.compute_bill_series(results_df['P_grid'])
+        annual_billing_cycles = billing_cycle_data.resample('1YS').sum()
+        annual_billing_cycles.columns.name = 'expense_type'
         tz = annual_billing_cycles.index.tz
+        zero_year = annual_billing_cycles.index.year[0]
         annual_billing_cycles.loc['category', :] = 'tariff'
         # Add level to column multiindex
         annual_billing_cycles = annual_billing_cycles.T.set_index('category', append=True).T
 
-        annual_cash_flows: list[tuple[str, str], pd.Series] = []
-        cash_flow_products = []
+        cash_flow_product_labels = []
         cash_flow_dataframes = []
         for product, cash_flows in financial_inputs.product_cash_flows.items():
-            cash_flow_products = cash_flow_products + [product] * cash_flows.unit_cash_flows.shape[1]
-            cash_flow_dataframes.append(cash_flows.unit_cash_flows)
+            cash_flow_product_labels = cash_flow_product_labels + [product] * cash_flows.unit_cash_flows.shape[1]
+            n_product = optimization_results.sizing_results.get(PRODUCT_TO_SIZING_OUTPUT_MAP[product], 0)
+            cash_flow_dataframes.append(n_product * cash_flows.unit_cash_flows)
 
         cash_flow_df = pd.concat(cash_flow_dataframes, axis=1)
-        cash_flow_df['category'] = cash_flow_products
+        cash_flow_df.columns.name = 'expense_type'
+        cash_flow_df.loc['category',:] = cash_flow_product_labels
         cash_flow_df = cash_flow_df.T.set_index('category', append=True).T
-        cash_flow_df.index = pd.DatetimeIndex([pd.Timestamp(year=year, month=1, day=1) for year in cash_flow_df.index], tz=tz)
+
+        # The cash flow df is zero-indexed by year (0, 1, 2, ...); need to convert to actual years
+        assert len(cash_flow_df) == len(annual_billing_cycles)
+        cash_flow_df.index = pd.DatetimeIndex([pd.Timestamp(year=year_i + zero_year, month=1, day=1) for year_i in cash_flow_df.index], tz=tz)
+        assert cash_flow_df.index.equals(annual_billing_cycles.index)
 
         combined_annual_financials = pd.concat([annual_billing_cycles, cash_flow_df], axis=1)
+        combined_annual_financials.index = pd.DatetimeIndex(combined_annual_financials.index)
 
         return combined_annual_financials
     
@@ -391,7 +401,7 @@ class SizingSweepScenarioRunner(ScenarioRunner):
                     optimization_end=self.general_assumptions.end_date,
                     design_inputs=design_inputs,
                     financial_model_inputs=financial_inputs,
-                    optimization_clock=OptimizationClock(frequency='1Y', horizon=None, lookback=None),
+                    optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
                     parallelize=False
                 )
                 
@@ -485,7 +495,7 @@ class TopNScenarioRunner(ScenarioRunner):
                     optimization_end=self.general_assumptions.end_date,
                     design_inputs=design_inputs,
                     financial_model_inputs=financial_inputs,
-                    optimization_clock=OptimizationClock(frequency='1Y', horizon=None, lookback=None),
+                    optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
                     parallelize=False
                 )
                 
@@ -542,7 +552,7 @@ class TopNScenarioRunner(ScenarioRunner):
             optimization_end=self.general_assumptions.end_date,
             design_inputs=design_inputs,
             financial_model_inputs=financial_inputs,
-            optimization_clock=OptimizationClock(frequency='1Y', horizon=None, lookback=None),
+            optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
             parallelize=False
         )
         

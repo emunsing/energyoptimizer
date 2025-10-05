@@ -333,8 +333,9 @@ class TariffModel:
         
         for cycle_start, cycle_end in self.billing_cycles:
             # Filter power series to this billing cycle
+            # TODO: Single-period data will fail our computation of timdelta dt for power-to-energy conversion
             cycle_power = power_series.loc[cycle_start:cycle_end]
-            if cycle_power.empty:
+            if cycle_power.empty or len(cycle_power) == 1:
                 continue
 
             bill_series[cycle_start] = self.compute_total_bill(cycle_power)
