@@ -538,7 +538,8 @@ class OptimizationClock:
 
         if self.frequency is None or (end - to_offset(self.frequency))<=start:
             # Single optimization for the full period
-            assert self.lookback is None and self.horizon is None, "Lookback and horizon must be None if frequency=None"
+            if self.frequency is None:
+                assert self.lookback is None and self.horizon is None, "Lookback and horizon must be None if frequency=None"
             intervals =  [(start, start, end)]
         else:
             optimize_times = pd.date_range(start=start, end=end - to_offset(self.frequency), freq=self.frequency)

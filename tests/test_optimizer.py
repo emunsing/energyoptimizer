@@ -199,12 +199,7 @@ def optimizer_clock_freq_list():
         OptimizationClock(frequency='Q', horizon=pd.DateOffset(months=6), lookback=None),
     ]
 
-def demand_charge_optimizer_clock_freq_list():
-    return [
-        OptimizationClock(frequency='M', horizon=pd.DateOffset(months=2), lookback=None),
-        OptimizationClock(frequency='Q', horizon=pd.DateOffset(months=4), lookback=None),
-        OptimizationClock(frequency='A', horizon=None, lookback=None),
-    ]
+
 
 
 # Clock types: no/horizons
@@ -223,6 +218,18 @@ def optimizer_clock_horizon_no_lookback():
 @pytest.fixture
 def optimizer_clock_horizon_and_lookback():
     return OptimizationClock(frequency='W-SUN', horizon=pd.DateOffset(days=14), lookback=pd.DateOffset(days=7))
+
+sample_optimizer_clock_list = [OptimizationClock(frequency='W-SUN', horizon=None, lookback=None),
+                               OptimizationClock(frequency='W-SUN', horizon=pd.DateOffset(days=14), lookback=None),
+                              OptimizationClock(frequency='W-SUN', horizon=None, lookback=pd.DateOffset(days=7)),
+                              OptimizationClock(frequency='W-SUN', horizon=pd.DateOffset(days=14), lookback=pd.DateOffset(days=7)),
+                              ]
+
+demand_charge_optimizer_clock_list = [
+        OptimizationClock(frequency='MS', horizon=pd.DateOffset(months=2), lookback=None),  # Use starting freqs
+        OptimizationClock(frequency='QS', horizon=pd.DateOffset(months=4), lookback=None),
+        OptimizationClock(frequency='1YS', horizon=None, lookback=None),
+    ]
 
 @pytest.fixture(
     params=[
@@ -268,13 +275,14 @@ class TestOptimizationRunner:
         financial_spec=default_financial_spec
     )
 
-    @pytest.mark.parametrize('clock_invariant_optimizer',
+    @pytest.mark.parametrize('clock_invariant_optimizer,optimizer_clock_list',
                              [
-                                 "tou_optimization",
-                                 "SUBPANEL_SELF_CONSUMPTION",
+                                 ("tou_optimization", sample_optimizer_clock_list),
+                                 ("SUBPANEL_SELF_CONSUMPTION", sample_optimizer_clock_list),
+                                 ("demand_charge_tou_optimization", demand_charge_optimizer_clock_list),
                              ]
                              )
-    def test_optimization_runner_clock_types(self, clock_invariant_optimizer, sample_optimization_clock_list):
+    def test_optimization_runner_clock_types(self, clock_invariant_optimizer, optimizer_clock_list):
         # Run this with a shorter date range for speed; we're using a 1-week clock
         general_assumptions = GeneralAssumptions(start_date='2026-01-01', end_date='2026-03-01')
         scenario_spec = ScenarioSpec(
@@ -297,26 +305,30 @@ class TestOptimizationRunner:
         reference_results = {}
         previous_results = None
 
-        for clock in sample_optimization_clock_list:
+        for clock in optimizer_clock_list:
             inputs = attrs.evolve(inputs, optimization_clock=clock)
             runner = OptimizationRunner(inputs)
             results = runner.run_optimization()
+            result_df = results.results_df
+            assert result_df.index[0] == general_assumptions.start_date
+            assert result_df.index[-1] >= general_assumptions.end_date - pd.tseries.frequencies.to_offset(general_assumptions.study_resolution)
             reference_results[clock_invariant_optimizer] = results
             if previous_results is None:
                 previous_results = results
                 continue
             else:
                 # Check that results are identical regardless of clock settings
-                assert np.allclose(previous_results.results_df.abs().sum(), results.results_df.abs().sum(), rtol=1e-2)  # Allow 5% tolerance for end conditions when using a 1-week overlap
+                assert np.allclose(previous_results.results_df.abs().sum(), results.results_df.abs().sum(), rtol=5e-2)  # Allow 5% tolerance for end conditions when using a 1-week overlap
                 previous_results = results
 
-    @pytest.mark.parametrize('clock_invariant_optimizer',
+    @pytest.mark.parametrize('clock_invariant_optimizer,optimizer_clock_list',
                              [
-                                 "tou_optimization",
-                                 "SUBPANEL_SELF_CONSUMPTION"
+                                 ("tou_optimization", sample_optimizer_clock_list),
+                                  ("SUBPANEL_SELF_CONSUMPTION", sample_optimizer_clock_list),
+                                  ("demand_charge_tou_optimization", demand_charge_optimizer_clock_list),
                              ]
                              )
-    def test_optimization_runner_clock_intervals(self, clock_invariant_optimizer, optimizer_clock_freq_list):
+    def test_optimization_runner_clock_intervals(self, clock_invariant_optimizer, optimizer_clock_list):
         # Run this with a shorter date range for speed; we're using a 1-week clock
         design_inputs = self.default_scenario_spec.build_design_inputs()
         financial_inputs = self.default_scenario_spec.build_financial_model_inputs()
@@ -332,10 +344,13 @@ class TestOptimizationRunner:
         reference_results = {}
         previous_results = None
 
-        for clock in optimizer_clock_freq_list:
+        for clock in optimizer_clock_list:
             inputs = attrs.evolve(inputs, optimization_clock=clock)
             runner = OptimizationRunner(inputs)
             results = runner.run_optimization()
+            result_df = results.results_df
+            assert result_df.index[0] == self.default_general_assumptions.start_date
+            assert result_df.index[-1] >= self.default_general_assumptions.end_date - pd.tseries.frequencies.to_offset(self.default_general_assumptions.study_resolution)
             reference_results[clock_invariant_optimizer] = results
             if previous_results is None:
                 previous_results = results

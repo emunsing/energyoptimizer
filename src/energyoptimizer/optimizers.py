@@ -64,20 +64,18 @@ class OptimizerOutputs:
         if self.results_df is None:
             # Assume this is a cold start; we should just return the new results
             self.results_df = new_results.results_df
-            self.status = new_results.status
-            self.sizing_results = new_results.sizing_results
         else:
             new_results_start_at = new_results.results_df.index[0]
             keep_results = self.results_df.loc[:new_results_start_at - MIN_DT, :]
             self.results_df = pd.concat([keep_results, new_results.results_df])
 
-            self._intermediate_status_list += [new_results.status]
-            self.status = new_results.status
+        self._intermediate_status_list += [new_results.status]
+        self.status = new_results.status
 
-            assert sorted(self.sizing_results.keys()) == sorted(new_results.sizing_results.keys()), "Incompatible sizing results keys"
-            for k, v in new_results.sizing_results.items():
-                self._intermediate_sizing_results[k] += [v]
-            self.sizing_results = new_results.sizing_results
+        assert sorted(self.sizing_results.keys()) == sorted(new_results.sizing_results.keys()), "Incompatible sizing results keys"
+        for k, v in new_results.sizing_results.items():
+            self._intermediate_sizing_results[k] += [v]
+        self.sizing_results = new_results.sizing_results
 
     def trim(self, start_time, end_time):
         if self.results_df is not None:
