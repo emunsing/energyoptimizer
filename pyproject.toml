@@ -11,20 +11,30 @@ packages = [
 
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.12"
 pandas = "*"
 numpy = "*"
 cvxpy = "*"
 pvlib = "*"
-matplotlib = "*"
 pytest = "*"
 pyyaml = "*"
-panel = "*"
 attrs = "*"
 
+[tool.poetry.group.webapp]
+optional = true
+[tool.poetry.group.webapp.dependencies]
+panel = "*"
+
+[tool.poetry.group.analytics]
+optional = true
+[tool.poetry.group.analytics.dependencies]
+matplotlib = "*"
+plotly = "*"
+jupyter = "*"
+ipykernel = "*"
+pandas = "*"
+seaborn = "*"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-
