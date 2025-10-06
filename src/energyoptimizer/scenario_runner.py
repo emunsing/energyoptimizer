@@ -11,6 +11,7 @@ from .batteryopt_interface import (DesignInputs, FinancialModelInputs, ScenarioS
                                    OptimizationRunnerInputs, OptimizationClock, GeneralAssumptions,
                                    DesignSpec, TariffSpec, FinancialSpec, PRODUCT_TO_SIZING_OUTPUT_MAP)
 from .optimization_runner import OptimizationRunner
+from .batteryopt_utils import SUCCESS_STATUS
 from .tariff.tariff_utils import TariffModel
 
 
@@ -20,7 +21,11 @@ def _run_single_optimization(runner_inputs: OptimizationRunnerInputs) -> Optimiz
     This is used for parallel processing.
     """
     runner = OptimizationRunner(runner_inputs)
-    return runner.run_optimization()
+    result = runner.run_optimization()
+    if result.status not in SUCCESS_STATUS:
+        print(f"Warning: Optimization ended with status {result.status}")
+        result = OptimizerOutputs(status=result.status)
+    return result
 
 
 def closest_n_elements(x, n):
@@ -61,6 +66,8 @@ class ResultSummary:
     summary_stats: pd.Series = None
     optimization_status: str = None
     financial_summary: Dict[str, Any] = None
+    design_inputs: DesignInputs = None
+    financial_inputs: FinancialModelInputs = None
 
 
 class ResultSummarizer(Protocol):
@@ -70,7 +77,8 @@ class ResultSummarizer(Protocol):
                  optimizer_results: OptimizerOutputs,
                  design_inputs: DesignInputs, 
                  financial_inputs: FinancialModelInputs,
-                 tariff_model: TariffModel) -> ResultSummary:
+                 tariff_model: TariffModel,
+                  remove_baseline: bool=True) -> ResultSummary:
         """
         Summarize optimization results into a standardized format.
         
@@ -118,7 +126,9 @@ class BasicResultSummarizer:
             annual_financial_timeseries=annual_financial_timeseries,
             summary_stats=summary_stats,
             optimization_status=optimizer_results.status,
-            financial_summary=financial_summary
+            financial_summary=financial_summary,
+            design_inputs=design_inputs,
+            financial_inputs=financial_inputs,
         )
 
     def _create_annual_nonfinancial_timeseries(self, results_df: pd.DataFrame,
@@ -170,9 +180,11 @@ class BasicResultSummarizer:
         annual_billing_cycles.columns.name = 'expense_type'
         tz = annual_billing_cycles.index.tz
         zero_year = annual_billing_cycles.index.year[0]
-        annual_billing_cycles.loc['category', :] = 'tariff'
+        annual_billing_cycles = annual_billing_cycles.T
+        annual_billing_cycles.loc[:, 'category'] = 'tariff'
         # Add level to column multiindex
-        annual_billing_cycles = annual_billing_cycles.T.set_index('category', append=True).T
+        annual_billing_cycles = annual_billing_cycles.set_index('category', append=True)
+        annual_billing_cycles = annual_billing_cycles.T
 
         cash_flow_product_labels = []
         cash_flow_dataframes = []
@@ -183,8 +195,10 @@ class BasicResultSummarizer:
 
         cash_flow_df = pd.concat(cash_flow_dataframes, axis=1)
         cash_flow_df.columns.name = 'expense_type'
-        cash_flow_df.loc['category',:] = cash_flow_product_labels
-        cash_flow_df = cash_flow_df.T.set_index('category', append=True).T
+        cash_flow_df = cash_flow_df.T
+        cash_flow_df.loc[:, 'category'] = cash_flow_product_labels
+        cash_flow_df = cash_flow_df.set_index('category', append=True)
+        cash_flow_df = cash_flow_df.T
 
         # The cash flow df is zero-indexed by year (0, 1, 2, ...); need to convert to actual years
         assert len(cash_flow_df) == len(annual_billing_cycles)
@@ -217,14 +231,14 @@ class BasicResultSummarizer:
 class ScenarioRunner(ABC):
     """Base class for running multiple optimization scenarios."""
     
-    def __init__(self, 
+    def __init__(self,
                  general_assumptions: GeneralAssumptions,
                  design_spec: DesignSpec,
                  tariff_spec: TariffSpec,
                  financial_spec: FinancialSpec,
                  result_summarizer: ResultSummarizer = None,
                  parallelize: bool = False,
-                 n_processes: int = None):
+                 n_jobs: int = None):
         """
         Initialize the scenario runner.
         
@@ -235,7 +249,7 @@ class ScenarioRunner(ABC):
             financial_spec: Financial specifications
             result_summarizer: Optional custom result summarizer
             parallelize: Whether to run scenarios in parallel
-            n_processes: Number of processes for parallel execution (None = auto)
+            n_jobs: Number of processes for parallel execution (None = auto)
         """
         self.general_assumptions = general_assumptions
         self.design_spec = design_spec
@@ -243,7 +257,7 @@ class ScenarioRunner(ABC):
         self.financial_spec = financial_spec
         self.result_summarizer = result_summarizer or BasicResultSummarizer()
         self.parallelize = parallelize
-        self.n_processes = n_processes
+        self.n_jobs = n_jobs
         
         # Build scenario spec from components
         self.scenario_spec = ScenarioSpec(
@@ -282,7 +296,7 @@ class ScenarioRunner(ABC):
         """
         if self.parallelize and len(runner_inputs_list) > 1:
             # Run in parallel
-            with Pool(processes=self.n_processes) as pool:
+            with Pool(processes=self.n_jobs) as pool:
                 results = pool.map(_run_single_optimization, runner_inputs_list)
         else:
             # Run sequentially
@@ -353,7 +367,9 @@ class SizingSweepScenarioRunner(ScenarioRunner):
                     optimization_end=self.general_assumptions.end_date,
                     design_inputs=modified_design_input,
                     financial_model_inputs=self.financial_inputs,
-                    optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
+                    optimization_clock=OptimizationClock(frequency=self.general_assumptions.optimization_clock,
+                                                         horizon=self.general_assumptions.optimization_clock_horizon,
+                                                         lookback=self.general_assumptions.optimization_clock_lookback),
                     parallelize=False
                 )
                 

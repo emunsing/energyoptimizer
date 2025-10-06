@@ -8,6 +8,8 @@ import scipy.sparse as sps
 # from .batteryopt_interface import TariffModel  # Commented out due to incomplete implementation
 from src.energyoptimizer.batteryopt_utils import MIN_DT
 
+ERROR_STATUS = ['infeasible', 'unbounded', 'optimal infeasible']
+
 @attrs.define
 class OptimizationInputs:
     """
@@ -24,23 +26,25 @@ class OptimizationInputs:
     end: pd.Timestamp
     site_data: pd.DataFrame  # Columns: solar, circuit_load, non_circuit_load
     tariff_model: 'object'  # Any object with get_tariff_data method
-    batt_rt_eff: float = 0.85
-    batt_block_e_max: float = 13.5
-    batt_block_p_max: float = 5.0
-    backup_reserve: float = 0.2
-    batt_starting_soe: float | None = 0.5
-    der_subpanel_import_kw_limit: float = 100.0
-    der_subpanel_export_kw_limit: float = -100.0
-    site_import_kw_limit: float = 100.0
-    site_export_kw_limit: float = -100.0
+    batt_block_e_max: float
+    batt_block_p_max: float
+    der_subpanel_import_kw_limit: float
+    der_subpanel_export_kw_limit: float
+    site_import_kw_limit: float
+    site_export_kw_limit: float
     # Endogenous sizing parameters
-    solar_annualized_cost_per_kw: float = 0.15  # 3.0 / 20
-    batt_annualized_cost_per_unit: float = 1000.0
+    min_n_batt_blocks: int
+    max_n_batt_blocks: int
+    min_n_solar: int
+    max_n_solar: int
+
     integer_problem: bool = False
-    min_n_batt_blocks: int = 1
-    max_n_batt_blocks: int = 5
-    min_n_solar: int = 1
-    max_n_solar: int = 10
+    backup_reserve: float = 0.2
+    batt_rt_eff: float = 0.85
+    batt_starting_soe: float | None = 0.5
+    solar_annualized_cost_per_kw: float | None = None
+    batt_annualized_cost_per_unit: float | None = None
+
 
 
 @attrs.define
@@ -48,7 +52,7 @@ class OptimizerOutputs:
     """Standardized output format for all optimizers."""
     results_df: pd.DataFrame | None = attrs.field(default=None)
     status: str | None = attrs.field(default=None)
-    sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": 1, "n_solar": 1})
+    sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": np.nan, "n_solar": np.nan})
     _intermediate_sizing_results = attrs.field(init=False, factory=lambda: {"n_batt_blocks": [], "n_solar": []})
     _intermediate_status_list = attrs.field(init=False, factory=list)
 
@@ -90,13 +94,18 @@ class OptimizerOutputs:
 
 def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     # Extract parameters from OptimizationInputs
+    assert opt_inputs.max_n_batt_blocks == opt_inputs.min_n_batt_blocks, "This is not a sizing optimization"
+    assert opt_inputs.max_n_solar == opt_inputs.min_n_solar, "This is not a sizing optimization"
+    sizing_results = {'n_batt_blocks': opt_inputs.max_n_batt_blocks, 'n_solar': opt_inputs.max_n_solar}
     site_data = opt_inputs.site_data
+    scaled_solar = site_data['solar'] * opt_inputs.max_n_solar
+
     batt_rt_eff = opt_inputs.batt_rt_eff
-    batt_e_max = opt_inputs.batt_block_e_max
-    batt_p_max = opt_inputs.batt_block_p_max
+    batt_e_max = opt_inputs.batt_block_e_max * opt_inputs.max_n_batt_blocks
+    batt_p_max = opt_inputs.batt_block_p_max * opt_inputs.max_n_batt_blocks
     backup_reserve = opt_inputs.backup_reserve
-    import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
-    export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
+    import_kw_limit = opt_inputs.site_import_kw_limit
+    export_kw_limit = opt_inputs.site_export_kw_limit
 
     tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
     tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
@@ -147,7 +156,7 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                 e_min <= E,
                 E <= batt_e_max,
                 solar_post_curtailment >= 0,
-                solar_post_curtailment <= site_data['solar'],
+                solar_post_curtailment <= scaled_solar,
                 E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                 P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
                 E[0] == E_0
@@ -160,8 +169,8 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
 
     opt_start = time.time()
     prob.solve()
-    if prob.status == cp.INFEASIBLE:
-        raise AssertionError("Infeasible")
+    if prob.status in ERROR_STATUS:
+        return OptimizerOutputs(results_df=None, status=prob.status, sizing_results=sizing_results)
     print(f"Optimization done in {time.time() - opt_start :.3f} seconds")
 
     res = pd.DataFrame.from_dict({'P_batt': P_batt_charge.value + P_batt_discharge.value,
@@ -170,17 +179,21 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                                   'E': E[1:].value,
                                   'solar_post_curtailment': solar_post_curtailment.value
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(results_df=res, status=prob.status)
+    return OptimizerOutputs(results_df=res, status=prob.status, sizing_results=sizing_results)
 
 def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     # Extract parameters from OptimizationInputs
+    assert opt_inputs.max_n_batt_blocks == opt_inputs.min_n_batt_blocks, "This is not a sizing optimization"
+    assert opt_inputs.max_n_solar == opt_inputs.min_n_solar, "This is not a sizing optimization"
+    sizing_results = {'n_batt_blocks': opt_inputs.max_n_batt_blocks, 'n_solar': opt_inputs.max_n_solar}
     site_data = opt_inputs.site_data
+    scaled_solar = site_data['solar'] * opt_inputs.max_n_solar
     batt_rt_eff = opt_inputs.batt_rt_eff
-    batt_e_max = opt_inputs.batt_block_e_max
-    batt_p_max = opt_inputs.batt_block_p_max
+    batt_e_max = opt_inputs.batt_block_e_max * opt_inputs.max_n_batt_blocks
+    batt_p_max = opt_inputs.batt_block_p_max * opt_inputs.max_n_batt_blocks
     backup_reserve = opt_inputs.backup_reserve
-    import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
-    export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
+    import_kw_limit = opt_inputs.site_import_kw_limit
+    export_kw_limit = opt_inputs.site_export_kw_limit
 
     tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
     tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
@@ -239,7 +252,7 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
                 e_min <= E,
                 E <= batt_e_max,
                 solar_post_curtailment >= 0,
-                solar_post_curtailment <= site_data['solar'],
+                solar_post_curtailment <= scaled_solar,
                 E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                 P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
                 E[0] == E_0
@@ -260,8 +273,8 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
 
     opt_start = time.time()
     prob.solve()
-    if prob.status == cp.INFEASIBLE:
-        raise AssertionError("Infeasible")
+    if prob.status in ERROR_STATUS:
+        return OptimizerOutputs(results_df=None, status=prob.status, sizing_results=sizing_results)
     print(f"Optimization done in {time.time() - opt_start :.3f} seconds")
 
     res = pd.DataFrame.from_dict({'P_batt': P_batt_charge.value + P_batt_discharge.value,
@@ -270,7 +283,7 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
                                   'E': E[1:].value,
                                   'solar_post_curtailment': solar_post_curtailment.value
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(results_df=res, status=prob.status)
+    return OptimizerOutputs(results_df=res, status=prob.status, sizing_results=sizing_results)
 
 def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     """
@@ -278,15 +291,19 @@ def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOu
     Returns DataFrame with columns: P_batt, P_grid, E, solar_post_curtailment
     """
     # Extract parameters from OptimizationInputs
+    assert opt_inputs.max_n_batt_blocks == opt_inputs.min_n_batt_blocks, "This is not a sizing optimization"
+    assert opt_inputs.max_n_solar == opt_inputs.min_n_solar, "This is not a sizing optimization"
+    sizing_results = {'n_batt_blocks': opt_inputs.max_n_batt_blocks, 'n_solar': opt_inputs.max_n_solar}
     site_data = opt_inputs.site_data
+    scaled_solar = site_data['solar'] * opt_inputs.max_n_solar
     tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
     tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
     batt_rt_eff = opt_inputs.batt_rt_eff
-    batt_e_max = opt_inputs.batt_block_e_max
-    batt_p_max = opt_inputs.batt_block_p_max
+    batt_e_max = opt_inputs.batt_block_e_max * opt_inputs.max_n_batt_blocks
+    batt_p_max = opt_inputs.batt_block_p_max * opt_inputs.max_n_batt_blocks
     backup_reserve = opt_inputs.backup_reserve
-    import_kw_limit = opt_inputs.der_subpanel_import_kw_limit
-    export_kw_limit = opt_inputs.der_subpanel_export_kw_limit
+    import_kw_limit = opt_inputs.site_
+    export_kw_limit = opt_inputs.site_export_kw_limit
 
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
@@ -307,7 +324,7 @@ def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOu
 
     for t in range(n):
         load = site_data['load'].iloc[t]
-        solar = site_data['solar'].iloc[t]
+        solar = scaled_solar.iloc[t]
         net_load = load - solar  # positive: excess solar, negative: deficit
         batt_e = E[t]
         # Excess solar: try to charge battery
@@ -345,7 +362,7 @@ def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOu
                                   'E': E[1:],
                                   'solar_post_curtailment': solar_post_curtailment
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(results_df=res, status='feasible')
+    return OptimizerOutputs(results_df=res, status='feasible', sizing_results=sizing_results)
 
 def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     """
@@ -361,12 +378,16 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
     - Any remaining excess is curtailed
     """
     # Extract parameters from OptimizationInputs
+    assert opt_inputs.max_n_batt_blocks == opt_inputs.min_n_batt_blocks, "This is not a sizing optimization"
+    assert opt_inputs.max_n_solar == opt_inputs.min_n_solar, "This is not a sizing optimization"
+    sizing_results = {'n_batt_blocks': opt_inputs.max_n_batt_blocks, 'n_solar': opt_inputs.max_n_solar}
     site_data = opt_inputs.site_data
+    scaled_solar = site_data['solar'] * opt_inputs.max_n_solar
     tariff = opt_inputs.tariff_model.tariff_timeseries.copy()
     tariff = tariff.loc[site_data.index[0]:site_data.index[-1],:]
     batt_rt_eff = opt_inputs.batt_rt_eff
-    batt_e_max = opt_inputs.batt_block_e_max
-    batt_p_max = opt_inputs.batt_block_p_max
+    batt_e_max = opt_inputs.batt_block_e_max * opt_inputs.max_n_batt_blocks
+    batt_p_max = opt_inputs.batt_block_p_max * opt_inputs.max_n_batt_blocks
     backup_reserve = opt_inputs.backup_reserve
 
     if len(site_data) == 1:
@@ -396,7 +417,7 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
         der_subpanel_load = site_data['der_subpanel_load'].iloc[t]
         main_panel_load = site_data['main_panel_load'].iloc[t]
         servable_main_load = min(-opt_inputs.der_subpanel_export_kw_limit, main_panel_load)
-        solar = site_data['solar'].iloc[t]
+        solar = scaled_solar.iloc[t]
         subpanel_net_load = der_subpanel_load - solar  # positive: excess solar, negative: deficit
         servable_net_load = der_subpanel_load + servable_main_load - solar
         effective_net_load = servable_net_load
@@ -465,7 +486,7 @@ def subpanel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutput
                                   'solar_post_curtailment': solar_post_curtailment
                                   }).set_index(site_data.index)
     status = 'feasible' if feasible else 'infeasible'
-    return OptimizerOutputs(results_df=res, status=status)
+    return OptimizerOutputs(results_df=res, status=status, sizing_results=sizing_results)
 
 
 def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
@@ -498,7 +519,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     # E_transition = np.hstack([np.eye(n), np.zeros(n).reshape(-1,1)])
     starting_soe = opt_inputs.batt_starting_soe if opt_inputs.batt_starting_soe is not None else backup_reserve
 
-    s_size_kw = cp.Variable(integer=integer_problem, nonneg=True)
+    s_size = cp.Variable(integer=integer_problem, nonneg=True)
     n_batts = cp.Variable(integer=integer_problem, nonneg=True)
     batt_e_max = n_batts * batt_block_e_max
     starting_energy_kwh = starting_soe * batt_e_max
@@ -517,8 +538,8 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
 
     constraints = [-batt_p_max <= P_batt_charge,
                    P_batt_charge <= 0,
-                   int(opt_inputs.min_n_solar) <= s_size_kw,
-                   s_size_kw <= int(opt_inputs.max_n_solar),
+                   int(opt_inputs.min_n_solar) <= s_size,
+                   s_size <= int(opt_inputs.max_n_solar),
                    int(opt_inputs.min_n_batt_blocks) <= n_batts,
                    n_batts <= int(opt_inputs.max_n_batt_blocks),
                    0 <= P_batt_discharge,
@@ -533,7 +554,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                    e_min <= E,
                    E <= batt_e_max,
                    solar_post_curtailment >= 0,
-                   solar_post_curtailment <= cp.Constant(site_data['solar']) * s_size_kw,
+                   solar_post_curtailment <= cp.Constant(site_data['solar']) * s_size,
                    E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                    P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
                    E[0] == E_0
@@ -542,13 +563,15 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     obj = cp.Minimize(P_grid_sell @ px_sell_dt +
                       P_grid_buy @ px_buy_dt +
                       n_batts * batt_annualized_cost_per_unit * simulation_years +
-                      s_size_kw * solar_annualized_cost_per_kw * simulation_years
+                      s_size * solar_annualized_cost_per_kw * simulation_years
                       )
 
     prob = cp.Problem(obj, constraints)
 
     opt_start = time.time()
     prob.solve()
+    if prob.status in ERROR_STATUS:
+        return OptimizerOutputs(results_df=None, status=prob.status)
     print(f"Optimization done in {time.time() - opt_start :.3f} seconds")
 
     res = pd.DataFrame.from_dict({'P_batt': P_batt_charge.value + P_batt_discharge.value,
@@ -557,7 +580,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                         'E': E[1:].value,
                         'solar_post_curtailment': solar_post_curtailment.value,
                               }).set_index(site_data.index,)
-    sizing_results = {'n_batt_blocks': n_batts.value, 'n_solar': s_size_kw.value}
+    sizing_results = {'n_batt_blocks': n_batts.value, 'n_solar': s_size.value}
     return OptimizerOutputs(results_df=res, sizing_results=sizing_results, status=prob.status)
 
 
@@ -660,6 +683,8 @@ def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInp
 
     opt_start = time.time()
     prob.solve()
+    if prob.status in ERROR_STATUS:
+        return OptimizerOutputs(results_df=None, status=prob.status)
     print(f"Optimization done in {time.time() - opt_start :.3f} seconds")
 
     res = pd.DataFrame.from_dict({'P_batt': P_batt_charge.value + P_batt_discharge.value,

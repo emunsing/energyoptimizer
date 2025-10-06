@@ -71,5 +71,9 @@ def simple_optimization_inputs(start_date, end_date, freq):
         site_export_kw_limit=-100.0,
         solar_annualized_cost_per_kw=0.15,
         batt_annualized_cost_per_unit=1000.0,
+        min_n_batt_blocks=3,
+        max_n_batt_blocks=3,
+        min_n_solar=3,
+        max_n_solar=3,
         integer_problem=False
     )

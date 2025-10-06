@@ -37,6 +37,8 @@ class OptimizationRunner:
     def __init__(self, inputs: OptimizationRunnerInputs):
         """Initialize the OptimizationRunner with required inputs."""
         self.inputs = inputs
+
+        # Convenience references
         self.financial_model_inputs: FinancialModelInputs = inputs.financial_model_inputs
         self.design_inputs: DesignInputs = inputs.design_inputs
         
@@ -89,7 +91,15 @@ class OptimizationRunner:
                 der_subpanel_import_kw_limit=self.design_inputs.der_subpanel_import_kw_limit,
                 der_subpanel_export_kw_limit=self.design_inputs.der_subpanel_export_kw_limit,
                 site_import_kw_limit=self.design_inputs.site_import_kw_limit,
-                site_export_kw_limit=self.design_inputs.site_export_kw_limit
+                site_export_kw_limit=self.design_inputs.site_export_kw_limit,
+                min_n_batt_blocks=self.design_inputs.min_battery_units,
+                max_n_batt_blocks=self.design_inputs.max_battery_units,
+                min_n_solar=self.design_inputs.min_solar_units,
+                max_n_solar=self.design_inputs.max_solar_units,
+                integer_problem=self.inputs.integer_problem,
+                batt_starting_soe=self.design_inputs.batt_starting_soe,
+                solar_annualized_cost_per_kw=self.financial_model_inputs.solar_levelized_unit_cost,
+                batt_annualized_cost_per_unit=self.financial_model_inputs.battery_levelized_unit_cost,
             )
             
             # Run the appropriate optimizer

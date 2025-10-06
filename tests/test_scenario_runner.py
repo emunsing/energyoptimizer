@@ -57,7 +57,7 @@ class SharedTestFixtures:
         )
         
         tariff_spec = TariffSpec(rate_code="PGE_B_19_R")
-        financial_spec = FinancialSpec(study_years=1)
+        financial_spec = FinancialSpec(study_years=study_years)
         
         return ScenarioSpec(
             general_assumptions=general_assumptions,

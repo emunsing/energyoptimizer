@@ -96,6 +96,11 @@ def test_optimization_inputs_creation(one_year_optimization_inputs):
 ])
 def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization_inputs):
     start_time = time.time()
+    if 'endogenous_sizing' in optimizer_name:
+        # For endogenous sizing, ensure min sizes are at least 1
+        sample_optimization_inputs.min_n_batt_blocks = 1
+        sample_optimization_inputs.min_n_solar = 1
+
     result = optimizer_func(sample_optimization_inputs)
     print("Optimizer:", optimizer_name, "Time taken (s):", time.time() - start_time)
 
@@ -115,8 +120,8 @@ def test_bare_optimizer_func(optimizer_func, optimizer_name, sample_optimization
 
     # Battery charge/discharge within limits
     # P_batt should be within [-batt_block_p_max, batt_block_p_max]
-    assert np.all(results_df['P_batt'] >= -sample_optimization_inputs.batt_block_p_max)
-    assert np.all(results_df['P_batt'] <= sample_optimization_inputs.batt_block_p_max)
+    assert np.all(results_df['P_batt'] >= -sample_optimization_inputs.batt_block_p_max * sizing_results['n_batt_blocks'])
+    assert np.all(results_df['P_batt'] <= sample_optimization_inputs.batt_block_p_max * sizing_results['n_batt_blocks'])
     
     # Grid import/export within limits
     assert np.all(results_df['P_grid'] >= sample_optimization_inputs.site_export_kw_limit)

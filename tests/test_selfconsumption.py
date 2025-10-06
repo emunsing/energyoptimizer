@@ -22,8 +22,9 @@ class TestSubpanelSelfConsumption:
                            start_date=pd.Timestamp('2025-01-01', tz='US/Pacific'),
                            end_date=pd.Timestamp('2025-02-01', tz='US/Pacific')
                            )
-    
-    def create_optimization_inputs_from_test_case(self, test_case, mock_tariff_model):
+
+    @staticmethod
+    def create_optimization_inputs_from_test_case(test_case, mock_tariff_model):
         """Create OptimizationInputs from a single test case row."""
         # Create single-timestep site data
         timestamp = pd.DatetimeIndex(['2025-01-01 12:00:00'], tz='US/Pacific')
@@ -51,7 +52,11 @@ class TestSubpanelSelfConsumption:
             site_export_kw_limit=test_case['site_export_kw_limit'],
             solar_annualized_cost_per_kw=0.15,
             batt_annualized_cost_per_unit=1000.0,
-            integer_problem=False
+            integer_problem=False,
+            min_n_batt_blocks=1,
+            max_n_batt_blocks=1,
+            min_n_solar=1,
+            max_n_solar=1,
         )
         
         return opt_inputs

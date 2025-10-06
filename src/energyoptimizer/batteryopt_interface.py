@@ -27,7 +27,8 @@ class DesignInputs:
     batt_rt_eff: float = 0.85
     batt_block_e_max: float = 13.5  # Battery unit size (kWh)
     batt_block_p_max: float = 5.0  # Battery unit power (kW)
-    backup_reserve: float = 0.2
+    backup_reserve: float = 0.2  # as portion of full capacity
+    batt_starting_soe: float = 0.5  # as portion of full capacity
     
     # Circuit limits
     der_subpanel_import_kw_limit: float = 100.0
@@ -109,10 +110,10 @@ class DesignSpec:
           - Annual energy use intensity (EUI) in kWh/sqft-yr
     """
     # Sizing constraints
-    min_battery_units: int = 0
-    max_battery_units: int = 10
-    min_solar_units: int = 0
-    max_solar_units: int = 10
+    min_battery_units: int = 1
+    max_battery_units: int = 1
+    min_solar_units: int = 1
+    max_solar_units: int = 1
     
     # Battery specifications
     battery_unit_size: float = 13.5  # kWh
@@ -141,12 +142,22 @@ class DesignSpec:
     non_circuit_load_data: Optional[pd.DataFrame] = None  # For uploaded data
     facility_sqft: Optional[float] = None  # For flat load profile
     annual_eui: Optional[float] = None  # kWh/sqft-yr for flat load profile
-    
+
+    def validate_inputs(self):
+        assert self.min_battery_units >= 0 and self.max_battery_units >= self.min_battery_units, "Invalid battery unit constraints"
+        assert self.min_solar_units >= 0 and self.max_solar_units >= self.min_solar_units, "Invalid solar unit constraints"
+        assert der_subpanel_import_kw_limit >= 0, "Circuit import limit must be non-negative"
+        assert der_subpanel_export_kw_limit <= 0, "Circuit export limit must be non-positive"
+        assert site_import_limit >= 0, "Site import limit must be non-negative"
+        assert site_export_limit <= 0, "Site export limit must be non-positive"
+
+
     def build_solar_timeseries(self, time_index: pd.DatetimeIndex) -> pd.Series:
         """Build the solar timeseries from the design spec."""
         if self.solar_data_source == "upload" and self.solar_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            solar_series = self.solar_data['solar']
+            solar_series = self.solar_data['solar'].copy()
+            assert solar_series.min() >= -1, "Solar data contains negative values"
             if solar_series.index[0] <= time_index[0] and solar_series.index[-1] >= time_index[-1]:
                 # Supplied series is fully covers the study
                 solar_series = solar_series.loc[time_index[0]:time_index[-1]]
@@ -180,7 +191,8 @@ class DesignSpec:
         """Build the circuit load timeseries from the design spec."""
         if self.circuit_load_data_source == "upload" and self.circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.circuit_load_data['der_subpanel_load']
+            load_series = self.circuit_load_data['der_subpanel_load'].copy()
+            assert load_series.min() >= 0, "Circuit load data contains negative values"
 
             reindexed_load_series = shift_copy_dataset_to_new_index(input_dataset=load_series,
                                                                     new_time_index=time_index,)
@@ -194,7 +206,8 @@ class DesignSpec:
         """Build the non-circuit load timeseries from the design spec."""
         if self.non_circuit_load_data_source == "upload" and self.non_circuit_load_data is not None:
             # Use uploaded data directly - extract the series from DataFrame
-            load_series = self.non_circuit_load_data['main_panel_load']  # Get first column as Series
+            load_series = self.non_circuit_load_data['main_panel_load'].copy()  # Get first column as Series
+            assert load_series.min() >= 0, "Non-circuit load data contains negative values"
             # TODO: This needs to be fixed; we need to copy/shift the year-1 data to subsequent years
             result = shift_copy_dataset_to_new_index(input_dataset=load_series,
                                                      new_time_index=time_index,
@@ -473,14 +486,17 @@ class GeneralAssumptions:
     - Endogenous sizing: bool
     """
     start_date: Optional[pd.Timestamp | str] = None
-    timezone: str = 'US/Pacific'
     study_years: int = 10
-    endogenous_sizing: bool = False
-    optimization_type: str = 'self_consumption'  # 'self_consumption', 'tou_optimization', 'tou_endogenous_sizing'
-    study_resolution: str = '1H'  # e.g., '1H', '15T'
     end_date: Optional[pd.Timestamp | str] = None
+    timezone: str = 'US/Pacific'
+    optimization_type: str = 'self_consumption'  # 'self_consumption', 'tou_optimization', 'tou_endogenous_sizing'
+    endogenous_sizing: bool = False
+    integer_problem: bool = False
+    study_resolution: str = '1H'  # e.g., '1H', '15T'
     parallelize: bool = False
-    optimization_clock: str = 'single'
+    optimization_clock: str | None = None  # Frequency string or None for single optimization
+    optimization_clock_lookback: Optional[Union[str, pd.DateOffset]] = None
+    optimization_clock_horizon: Optional[Union[str, pd.DateOffset]] = None
 
     def __attrs_post_init__(self):
         if self.start_date is None:
@@ -586,6 +602,7 @@ class OptimizationRunnerInputs:
     financial_model_inputs: 'FinancialModelInputs'
     optimization_clock: Optional[OptimizationClock] = None
     parallelize: bool = True
+    integer_problem: bool = False
 
 @attrs.define
 class ScenarioSpec:
@@ -674,7 +691,8 @@ class ScenarioSpec:
             design_inputs=design_inputs,
             financial_model_inputs=financial_model_inputs,
             optimization_clock=optimization_clock,
-            parallelize=False
+            parallelize=False,
+            integer_problem=self.general_assumptions.integer_problem,
         )
 
 
