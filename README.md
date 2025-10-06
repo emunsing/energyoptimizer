@@ -27,3 +27,10 @@ This is designed so that **the same optimizer can be used in sales, design, onli
 
 - FinancialInputs:
   - Proper cash flow modeling for computing annualized product cost
+
+
+# Web optimizer
+
+
+## Consumer solar sizing
+`panel serve consumer_solar_sizing.py --autoreload --show`
