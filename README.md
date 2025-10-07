@@ -34,3 +34,18 @@ This is designed so that **the same optimizer can be used in sales, design, onli
 
 ## Consumer solar sizing
 `panel serve consumer_solar_sizing.py --autoreload --show`
+
+
+# Future directions and to-do
+
+Optimization speed: 
+[ ] warm-start optimizer
+[ ] Subset data to a smaller number of years
+
+Output plotting
+[ ] Support output graphs
+[ ] Support output tables
+
+Design functionality
+[ ] Support multiple products of similar property but different size
+[ ] Integer vs continuous solar sizing?
