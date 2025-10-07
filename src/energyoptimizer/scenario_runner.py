@@ -232,10 +232,7 @@ class ScenarioRunner(ABC):
     """Base class for running multiple optimization scenarios."""
     
     def __init__(self,
-                 general_assumptions: GeneralAssumptions,
-                 design_spec: DesignSpec,
-                 tariff_spec: TariffSpec,
-                 financial_spec: FinancialSpec,
+                 scenario_spec: ScenarioSpec,
                  result_summarizer: ResultSummarizer = None,
                  parallelize: bool = False,
                  n_jobs: int = None):
@@ -251,21 +248,12 @@ class ScenarioRunner(ABC):
             parallelize: Whether to run scenarios in parallel
             n_jobs: Number of processes for parallel execution (None = auto)
         """
-        self.general_assumptions = general_assumptions
-        self.design_spec = design_spec
-        self.tariff_spec = tariff_spec
-        self.financial_spec = financial_spec
         self.result_summarizer = result_summarizer or BasicResultSummarizer()
         self.parallelize = parallelize
         self.n_jobs = n_jobs
         
         # Build scenario spec from components
-        self.scenario_spec = ScenarioSpec(
-            general_assumptions=general_assumptions,
-            design_spec=design_spec,
-            tariff_spec=tariff_spec,
-            financial_spec=financial_spec
-        )
+        self.scenario_spec = scenario_spec
         
         # Build common inputs
         self.design_inputs = self.scenario_spec.build_design_inputs()
@@ -322,8 +310,8 @@ class ScenarioRunner(ABC):
         for optimizer_result in self.optimizer_results:
             summary = self.result_summarizer.summarize(
                 optimizer_result, 
-                self.design_inputs, 
-                self.financial_inputs, 
+                self.design_inputs,
+                self.financial_inputs,
                 self.tariff_model
             )
             self.result_summaries.append(summary)
@@ -349,8 +337,8 @@ class SizingSweepScenarioRunner(ScenarioRunner):
         runner_inputs_list = []
         
         # Create Cartesian product of battery and solar sizes
-        for n_batt in range(self.design_spec.min_battery_units, self.design_spec.max_battery_units + 1):
-            for solar_size in range(self.design_spec.min_solar_units, self.design_spec.max_solar_units + 1):
+        for n_batt in range(self.scenario_spec.design_spec.min_battery_units, self.scenario_spec.design_spec.max_battery_units + 1):
+            for solar_size in range(self.scenario_spec.design_spec.min_solar_units, self.scenario_spec.design_spec.max_solar_units + 1):
                 # Create modified scenario spec with fixed sizes
                 modified_design_input = attrs.evolve(
                     self.design_inputs,
@@ -362,14 +350,14 @@ class SizingSweepScenarioRunner(ScenarioRunner):
 
                 # Build inputs
                 runner_inputs = OptimizationRunnerInputs(
-                    optimization_type=OptimizationType(self.general_assumptions.optimization_type),
-                    optimization_start=self.general_assumptions.start_date,
-                    optimization_end=self.general_assumptions.end_date,
+                    optimization_type=OptimizationType(self.scenario_spec.general_assumptions.optimization_type),
+                    optimization_start=self.scenario_spec.general_assumptions.start_date,
+                    optimization_end=self.scenario_spec.general_assumptions.end_date,
                     design_inputs=modified_design_input,
                     financial_model_inputs=self.financial_inputs,
-                    optimization_clock=OptimizationClock(frequency=self.general_assumptions.optimization_clock,
-                                                         horizon=self.general_assumptions.optimization_clock_horizon,
-                                                         lookback=self.general_assumptions.optimization_clock_lookback),
+                    optimization_clock=OptimizationClock(frequency=self.scenario_spec.general_assumptions.optimization_clock,
+                                                         horizon=self.scenario_spec.general_assumptions.optimization_clock_horizon,
+                                                         lookback=self.scenario_spec.general_assumptions.optimization_clock_lookback),
                     parallelize=False
                 )
                 
@@ -407,8 +395,8 @@ class TopNScenarioRunner(ScenarioRunner):
         
         # Step 3: Find N closest integer points
         if self.respect_bounds:
-            batt_size_candidates = range(self.design_spec.min_battery_units, self.design_spec.max_battery_units + 1)
-            solar_size_candidates = range(self.design_spec.min_solar_units, self.design_spec.max_solar_units + 1)
+            batt_size_candidates = range(self.scenario_spec.design_spec.min_battery_units, self.scenario_spec.design_spec.max_battery_units + 1)
+            solar_size_candidates = range(self.scenario_spec.design_spec.min_solar_units, self.scenario_spec.design_spec.max_solar_units + 1)
             candidate_points = np.array([[solar, batt] for solar in solar_size_candidates for batt in batt_size_candidates])
             distances = np.linalg.norm(candidate_points - optimal_point, axis=1)
             idx = np.argsort(distances)[:self.n_closest]
@@ -430,9 +418,9 @@ class TopNScenarioRunner(ScenarioRunner):
 
             # Build inputs
             runner_inputs = OptimizationRunnerInputs(
-                optimization_type=OptimizationType(self.general_assumptions.optimization_type),
-                optimization_start=self.general_assumptions.start_date,
-                optimization_end=self.general_assumptions.end_date,
+                optimization_type=OptimizationType(self.scenario_spec.general_assumptions.optimization_type),
+                optimization_start=self.scenario_spec.general_assumptions.start_date,
+                optimization_end=self.scenario_spec.general_assumptions.end_date,
                 design_inputs=modified_design_input,
                 financial_model_inputs=self.financial_inputs,
                 optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
@@ -446,12 +434,12 @@ class TopNScenarioRunner(ScenarioRunner):
         # Create scenario spec with endogenous sizing enabled
         endogenous_spec = ScenarioSpec(
             general_assumptions=attrs.evolve(
-                self.general_assumptions,
+                self.scenario_spec.general_assumptions,
                 optimization_type='tou_endogenous_sizing'  # Use endogenous sizing type
             ),
-            design_spec=self.design_spec,
-            tariff_spec=self.tariff_spec,
-            financial_spec=self.financial_spec
+            design_spec=self.scenario_spec.design_spec,
+            tariff_spec=self.scenario_spec.tariff_spec,
+            financial_spec=self.scenario_spec.financial_spec
         )
         
         # Build inputs and run optimization
@@ -460,8 +448,8 @@ class TopNScenarioRunner(ScenarioRunner):
         
         runner_inputs = OptimizationRunnerInputs(
             optimization_type=OptimizationType.TOU_ENDOGENOUS_SIZING,
-            optimization_start=self.general_assumptions.start_date,
-            optimization_end=self.general_assumptions.end_date,
+            optimization_start=self.scenario_spec.general_assumptions.start_date,
+            optimization_end=self.scenario_spec.general_assumptions.end_date,
             design_inputs=design_inputs,
             financial_model_inputs=financial_inputs,
             optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),

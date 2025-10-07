@@ -200,12 +200,7 @@ class TestBasicResultSummarizer:
 def test_scenario_dispatch_small_sweep(short_scenario_spec):
     scenario_spec = short_scenario_spec
     """Test scenario dispatch with a small sweep."""
-    runner = SizingSweepScenarioRunner(
-        general_assumptions=scenario_spec.general_assumptions,
-        design_spec=scenario_spec.design_spec,
-        tariff_spec=scenario_spec.tariff_spec,
-        financial_spec=scenario_spec.financial_spec,
-    )
+    runner = SizingSweepScenarioRunner(scenario_spec=scenario_spec)
 
     runner.run_scenarios()
     optimizer_results = runner.get_optimizer_results()
@@ -232,10 +227,7 @@ def test_topn_scenario_runner(short_scenario_spec):
     scenario_spec = short_scenario_spec
     n_closest = 3
     runner = TopNScenarioRunner(
-        general_assumptions=scenario_spec.general_assumptions,
-        design_spec=scenario_spec.design_spec,
-        tariff_spec=scenario_spec.tariff_spec,
-        financial_spec=scenario_spec.financial_spec,
+        scenario_spec=scenario_spec,
         n_closest=n_closest
     )
 
