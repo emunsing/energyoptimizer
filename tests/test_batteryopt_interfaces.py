@@ -5,13 +5,13 @@ from datetime import datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
 
-from src.energyoptimizer.batteryopt_interface import (
+from energyoptimizer.batteryopt_interface import (
     DesignSpec, FinancialSpec, GeneralAssumptions, TariffSpec, ScenarioSpec,
     DesignInputs, FinancialModelInputs
 )
-from src.energyoptimizer.tariff.tariff_utils import TariffModel
-from .test_utils import sample_site_data
-from src.energyoptimizer.optimization_runner import OptimizationRunnerInputs, OptimizationType
+from energyoptimizer.tariff.tariff_utils import TariffModel
+from energyoptimizer.test_utils import sample_site_data
+from energyoptimizer.optimization_runner import OptimizationRunnerInputs, OptimizationType
 
 TZ = 'US/Pacific'
 

@@ -2,9 +2,9 @@ import attrs
 import pandas as pd
 import enum
 from typing import Optional, Union
-from .tariff.tariff_utils import TariffModel
+from energyoptimizer.tariff.tariff_utils import TariffModel
 from dateutil.relativedelta import relativedelta
-from .batteryopt_utils import shift_copy_dataset_to_new_index
+from energyoptimizer.batteryopt_utils import shift_copy_dataset_to_new_index
 from pandas.tseries.frequencies import to_offset
 
 PRODUCT_TO_SIZING_OUTPUT_MAP = {'battery': 'n_batt_blocks',

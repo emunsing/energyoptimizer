@@ -7,13 +7,13 @@ import time
 from multiprocessing import Pool
 from functools import partial
 
-from .optimizers import OptimizerOutputs, WrappedOptimizerOutputs
-from .batteryopt_interface import (DesignInputs, FinancialModelInputs, ScenarioSpec, OptimizationType,
+from energyoptimizer.optimizers import OptimizerOutputs, WrappedOptimizerOutputs
+from energyoptimizer.batteryopt_interface import (DesignInputs, FinancialModelInputs, ScenarioSpec, OptimizationType,
                                    OptimizationRunnerInputs, OptimizationClock, GeneralAssumptions,
                                    DesignSpec, TariffSpec, FinancialSpec, PRODUCT_TO_SIZING_OUTPUT_MAP)
-from .optimization_runner import OptimizationRunner, OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP
-from .batteryopt_utils import SUCCESS_STATUS
-from .tariff.tariff_utils import TariffModel
+from energyoptimizer.optimization_runner import OptimizationRunner, OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP
+from energyoptimizer.batteryopt_utils import SUCCESS_STATUS
+from energyoptimizer.tariff.tariff_utils import TariffModel
 
 
 def _run_single_optimization(runner_inputs: OptimizationRunnerInputs) -> WrappedOptimizerOutputs:
@@ -65,6 +65,7 @@ class ResultSummary:
     annual_nonfinancial_timeseries: pd.DataFrame = None
     annual_financial_timeseries: pd.DataFrame = None
     summary_stats: pd.Series = None
+    sizing_results: Dict[str, Any] = None
     optimization_status: str = None
     financial_summary: Dict[str, Any] = None
     design_inputs: DesignInputs = None
@@ -103,14 +104,17 @@ class BasicResultSummarizer:
         financial_inputs = optimizer_results.financial_inputs
         tariff_model = optimizer_results.design_inputs.tariff_model
         results_df = optimizer_results.results_df
+        sizing_results = optimizer_results.sizing_results
         combined_timeseries = pd.concat([results_df,
                                          design_inputs.site_data,
                                          tariff_model.tariff_timeseries
                                          ], axis=1).loc[results_df.index]
+        combined_timeseries['solar'] *= sizing_results.get('n_solar', 0)
         billing_cycles = tariff_model.compute_bill_series(results_df['P_grid'])
         annual_financial_timeseries = self._create_annual_financial_timeseries(optimization_results=optimizer_results)
         annual_nonfinancial_timeseries = self._create_annual_nonfinancial_timeseries(results_df=results_df,
                                                                                      design_inputs=design_inputs,
+                                                                                     sizing_results=sizing_results,
                                                                                      tariff_model=tariff_model)
         summary_stats = self._compute_summary_stats(annual_nonfinancial_timeseries)
         financial_summary = self._extract_financial_summary(financial_inputs, annual_financial_timeseries)
@@ -125,21 +129,23 @@ class BasicResultSummarizer:
             financial_summary=financial_summary,
             design_inputs=design_inputs,
             financial_inputs=financial_inputs,
+            sizing_results=sizing_results
         )
 
     def _create_annual_nonfinancial_timeseries(self, results_df: pd.DataFrame,
                                 design_inputs: DesignInputs, 
                                 tariff_model: TariffModel,
+                                               sizing_results: Dict[str, Any]
                                 ) -> pd.DataFrame:
         """Create annual timeseries with all required metrics."""
         # Get time step duration
         dt_hours = results_df.index.to_series().diff().dt.total_seconds().iloc[1] / 3600
         
         annual_data = {}
-        annual_data['uncurtailed_solar_kwh'] = design_inputs.site_data['solar'] * dt_hours
+        annual_data['uncurtailed_solar_kwh'] = design_inputs.site_data['solar'] * sizing_results['n_solar'] * dt_hours
         
         # Curtailed solar energy production (kWh)
-        curtailed_solar = design_inputs.site_data['solar'] - results_df['solar_post_curtailment']
+        curtailed_solar = design_inputs.site_data['solar'] * sizing_results['n_solar'] - results_df['solar_post_curtailment']
         annual_data['curtailed_solar_kwh'] = curtailed_solar * dt_hours
         
         annual_data['grid_imports_kwh'] = results_df['P_grid'].clip(lower=0) * dt_hours

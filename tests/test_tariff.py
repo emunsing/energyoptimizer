@@ -4,8 +4,8 @@ import pytest
 import hashlib
 import json
 from datetime import date, datetime
-from src.energyoptimizer.tariff.tariff_utils import TariffModel
-from src.energyoptimizer.batteryopt_utils import create_time_columns
+from energyoptimizer.tariff.tariff_utils import TariffModel
+from energyoptimizer.batteryopt_utils import create_time_columns
 
 RATE_CODES = ['PGE_B_19_R']
 

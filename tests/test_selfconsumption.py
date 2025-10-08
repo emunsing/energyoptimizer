@@ -3,8 +3,8 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-from src.energyoptimizer.optimizers import OptimizationInputs, subpanel_self_consumption
-from src.energyoptimizer.tariff.tariff_utils import TariffModel
+from energyoptimizer.optimizers import OptimizationInputs, subpanel_self_consumption
+from energyoptimizer.tariff.tariff_utils import TariffModel
 
 
 class TestSubpanelSelfConsumption:

@@ -4,18 +4,18 @@ import numpy as np
 from dateutil.relativedelta import relativedelta
 from unittest.mock import Mock, MagicMock
 
-from src.energyoptimizer.scenario_runner import (
+from energyoptimizer.scenario_runner import (
     closest_n_elements, ResultSummary, BasicResultSummarizer, 
     ScenarioRunner, SizingSweepScenarioRunner, TopNScenarioRunner
 )
-from src.energyoptimizer.batteryopt_interface import (
+from energyoptimizer.batteryopt_interface import (
     ScenarioSpec, GeneralAssumptions, DesignSpec, TariffSpec, FinancialSpec,
     DesignInputs, FinancialModelInputs, OptimizationType, OptimizationClock,
     OptimizationRunnerInputs, ProductCashFlows, PRODUCT_TO_SIZING_OUTPUT_MAP
 )
-from src.energyoptimizer.batteryopt_utils import MIN_DT
-from src.energyoptimizer.optimizers import OptimizerOutputs
-from src.energyoptimizer.tariff.tariff_utils import TariffModel
+from energyoptimizer.batteryopt_utils import MIN_DT
+from energyoptimizer.optimizers import OptimizerOutputs
+from energyoptimizer.tariff.tariff_utils import TariffModel
 from tests.test_utils import sample_site_data
 from tests.test_optimizer import TZ
 

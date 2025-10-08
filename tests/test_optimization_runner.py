@@ -3,9 +3,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.energyoptimizer.batteryopt_interface import OptimizationClock, TariffSpec, DesignSpec, FinancialSpec, \
+from energyoptimizer.batteryopt_interface import OptimizationClock, TariffSpec, DesignSpec, FinancialSpec, \
     GeneralAssumptions, ScenarioSpec, OptimizationRunnerInputs, OptimizationType
-from src.energyoptimizer.optimization_runner import OptimizationRunner
+from energyoptimizer.optimization_runner import OptimizationRunner
 from tests.test_optimizer import TZ
 from tests.test_utils import sample_site_data
 

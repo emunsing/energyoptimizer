@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from src.energyoptimizer.optimizers import OptimizationInputs
-from src.energyoptimizer.tariff.tariff_utils import TariffModel
-from src.energyoptimizer.batteryopt_utils import MIN_DT
+from energyoptimizer.optimizers import OptimizationInputs
+from energyoptimizer.tariff.tariff_utils import TariffModel
+from energyoptimizer.batteryopt_utils import MIN_DT
 
 
 def ensure_tzinfo(t, tz):

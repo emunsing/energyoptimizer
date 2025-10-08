@@ -6,8 +6,7 @@ import time
 import scipy.sparse as sps
 
 from energyoptimizer.batteryopt_interface import DesignInputs, FinancialModelInputs
-# from .batteryopt_interface import TariffModel  # Commented out due to incomplete implementation
-from src.energyoptimizer.batteryopt_utils import MIN_DT
+from energyoptimizer.batteryopt_utils import MIN_DT
 
 ERROR_STATUS = ['infeasible', 'unbounded', 'optimal infeasible']
 
@@ -179,7 +178,6 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                 P_grid_buy + P_grid_sell - site_data['main_panel_load'] + P_subpanel_import + P_subpanel_export == 0,
                 e_min <= E,
                 E <= batt_e_max,
-                solar_post_curtailment >= 0,
                 solar_post_curtailment <= scaled_solar,
                 E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                 P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
@@ -276,7 +274,6 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
                 P_grid_buy + P_grid_sell - site_data['main_panel_load'] + P_subpanel_import + P_subpanel_export == 0,
                 e_min <= E,
                 E <= batt_e_max,
-                solar_post_curtailment >= 0,
                 solar_post_curtailment <= scaled_solar,
                 E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                 P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
@@ -573,7 +570,6 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                    P_grid_buy + P_grid_sell - site_data['main_panel_load'] + P_subpanel_import + P_subpanel_export == 0,
                    e_min <= E,
                    E <= batt_e_max,
-                   solar_post_curtailment >= 0,
                    solar_post_curtailment <= cp.Constant(site_data['solar']) * s_size,
                    E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                    P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] - site_data['main_panel_load'] + solar_post_curtailment == 0,
@@ -676,7 +672,6 @@ def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInp
                    P_grid_buy + P_grid_sell - site_data['main_panel_load'] + P_subpanel_import + P_subpanel_export == 0,
                    e_min <= E,
                    E <= batt_e_max,
-                   solar_post_curtailment >= 0,
                    solar_post_curtailment <= cp.Constant(site_data['solar']) * s_size_kw,
                    E[1:] == E_transition @ E - (P_batt_charge * oneway_eff + P_batt_discharge / oneway_eff) * dt,
                    P_batt_charge + P_batt_discharge + P_grid_buy + P_grid_sell - site_data['der_subpanel_load'] -

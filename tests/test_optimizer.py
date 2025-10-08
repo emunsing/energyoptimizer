@@ -2,8 +2,8 @@ import pytest
 import pandas as pd
 import numpy as np
 import time
-from .test_utils import simple_optimization_inputs
-from src.energyoptimizer.optimizers import (
+from energyoptimizer.test_utils import simple_optimization_inputs
+from energyoptimizer.optimizers import (
     tou_optimization,
     demand_charge_tou_optimization,
     demand_charge_tou_endogenous_sizing_optimization,
@@ -11,7 +11,7 @@ from src.energyoptimizer.optimizers import (
     tou_endogenous_sizing_optimization,
     OptimizerOutputs
 )
-from src.energyoptimizer.tariff.tariff_utils import TariffModel
+from energyoptimizer.tariff.tariff_utils import TariffModel
 
 TZ = 'US/Pacific'
 

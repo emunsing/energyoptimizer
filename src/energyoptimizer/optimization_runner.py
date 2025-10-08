@@ -3,15 +3,15 @@ import enum
 from typing import Optional, TYPE_CHECKING
 import attrs
 from multiprocessing import Pool
-from .optimizers import (OptimizationInputs, OptimizerOutputs, WrappedOptimizerOutputs,
+from energyoptimizer.optimizers import (OptimizationInputs, OptimizerOutputs, WrappedOptimizerOutputs,
                          subpanel_self_consumption, single_panel_self_consumption,
                          tou_optimization, demand_charge_tou_optimization,
                          tou_endogenous_sizing_optimization, demand_charge_tou_endogenous_sizing_optimization,
                          )
 
-from .batteryopt_interface import DesignInputs, FinancialModelInputs, OptimizationType, OptimizationClock, OptimizationRunnerInputs
+from energyoptimizer.batteryopt_interface import DesignInputs, FinancialModelInputs, OptimizationType, OptimizationClock, OptimizationRunnerInputs
 
-from src.energyoptimizer.batteryopt_utils import MIN_DT
+from energyoptimizer.batteryopt_utils import MIN_DT
 
 
 # Global mapping of optimization types to their functions

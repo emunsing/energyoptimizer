@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import pytz
 import itertools as it
-from src.energyoptimizer.batteryopt_utils import shift_copy_dataset_to_new_index
+from energyoptimizer.batteryopt_utils import shift_copy_dataset_to_new_index
 
 
 TZ='US/Pacific'
