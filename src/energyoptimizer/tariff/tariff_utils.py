@@ -191,7 +191,7 @@ class TariffModel:
     
     def _build_demand_charge_categorical_dataframe_and_price_map(self):
         """Build categorical dataframe indicating which periods are subject to demand charges."""
-        df = pd.DataFrame(index=self.time_index)
+        demand_charge_columns = {}
         demand_charge_price_map = {}
         
         # Create billing cycle-specific columns by copying season-period masks
@@ -213,14 +213,15 @@ class TariffModel:
                 # Get the mask for this season-period in this billing cycle
                 cycle_mask = (self.time_index >= cycle_start) & (self.time_index <= cycle_end)
                 billing_cycle_mask = self.season_period_masks[season_period_key] & cycle_mask
-                
-                df[col_name] = False
-                df.loc[billing_cycle_mask, col_name] = True
+
+                season_period_series = pd.Series(False, index=self.time_index)
+                season_period_series.loc[billing_cycle_mask] = True
+                demand_charge_columns[col_name] = season_period_series
 
                 rate = self.season_period_demand_rates.loc[season_period_key, year]
                 demand_charge_price_map[col_name] = rate
         
-        self.demand_charge_categorical_dataframe = df
+        self.demand_charge_categorical_dataframe = pd.DataFrame.from_dict(demand_charge_columns, orient='columns')
         self.demand_charge_price_map = pd.Series(demand_charge_price_map).fillna(0)
 
 

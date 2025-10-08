@@ -295,16 +295,16 @@ class FinancialSpec:
     discount_rate: float = 0.07
     
     # Solar costs
-    solar_capital_cost_per_unit: float = 3000.0  # $/kW
-    solar_installationrepair_labor_cost_per_unit: float = 0.0  # $/kW
+    solar_capital_cost_per_unit: float = 3000.0
+    solar_installationrepair_labor_cost_per_unit: float = 0.0
     solar_fixed_upfront_installation_cost: float = 0.0  # $
     solar_lifetime: int = 25  # years
     solar_residual_value: float = 0.0  # portion of initial cost
     solar_annual_inflation_rate: float = 0.0
     
     # Battery costs
-    battery_capital_cost_per_unit: float = 1000.0  # $/kWh
-    battery_installation_cost_per_unit: float = 0.0  # $/kWh
+    battery_capital_cost_per_unit: float = 1000.0
+    battery_installation_cost_per_unit: float = 0.0
     battery_fixed_upfront_installation_cost: float = 0.0  # $
     battery_lifetime: int = 10  # years
     battery_residual_value: float = 0.0  # portion of initial cost
@@ -410,8 +410,11 @@ class FinancialSpec:
         product_cash_flows.at[0, 'soft_cost'] += closing_costs
 
         effective_monthly_interest_rate = (1.0 + interest_rate) ** (1.0 / 12.0) - 1.0
-        annuity_multiplier = self.annuity_payment(r=effective_monthly_interest_rate,
-                                            n=study_years * 12)
+        if effective_monthly_interest_rate > 0:
+            annuity_multiplier = self.annuity_payment(r=effective_monthly_interest_rate,
+                                                n=study_years * 12)
+        else: # No interest
+            annuity_multiplier = 1.0 / (study_years * 12.0)
         total_unit_pv = total_pv + closing_costs
         monthly_payment = total_unit_pv * annuity_multiplier
         annual_payment = monthly_payment * 12.0
@@ -490,7 +493,6 @@ class GeneralAssumptions:
     end_date: Optional[pd.Timestamp | str] = None
     timezone: str = 'US/Pacific'
     optimization_type: str = 'self_consumption'  # 'self_consumption', 'tou_optimization', 'tou_endogenous_sizing'
-    endogenous_sizing: bool = False
     integer_problem: bool = False
     study_resolution: str = '1H'  # e.g., '1H', '15T'
     parallelize: bool = False
@@ -601,7 +603,8 @@ class OptimizationRunnerInputs:
     design_inputs: 'DesignInputs'
     financial_model_inputs: 'FinancialModelInputs'
     optimization_clock: Optional[OptimizationClock] = None
-    parallelize: bool = True
+    parallelize: bool = False
+    n_jobs: Optional[int] = None
     integer_problem: bool = False
 
 @attrs.define
@@ -632,7 +635,8 @@ class ScenarioSpec:
         time_index = pd.date_range(
             start=start_date,
             end=self.general_assumptions.end_date,
-            freq=self.general_assumptions.study_resolution
+            freq=self.general_assumptions.study_resolution,
+            inclusive='left'
         )
         
         # Build timeseries data
@@ -680,9 +684,9 @@ class ScenarioSpec:
 
         optimization_type = OptimizationType(self.general_assumptions.optimization_type)
 
-        optimization_clock = OptimizationClock(frequency='1Y',
-                                               horizon=None,
-                                               lookback=None)
+        optimization_clock = OptimizationClock(frequency=self.general_assumptions.optimization_clock,
+                                               horizon=self.general_assumptions.optimization_clock_horizon,
+                                               lookback=self.general_assumptions.optimization_clock_lookback)
 
         return OptimizationRunnerInputs(
             optimization_type=optimization_type,

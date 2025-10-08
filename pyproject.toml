@@ -15,10 +15,12 @@ python = "^3.12"
 pandas = "*"
 numpy = "*"
 cvxpy = "*"
+highspy = "*"
 pvlib = "*"
 pytest = "*"
 pyyaml = "*"
 attrs = "*"
+cattrs = "*"
 
 [tool.poetry.group.webapp]
 optional = true

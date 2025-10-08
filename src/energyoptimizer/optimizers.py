@@ -5,6 +5,7 @@ import numpy as np
 import time
 import scipy.sparse as sps
 
+from energyoptimizer.batteryopt_interface import DesignInputs, FinancialModelInputs
 # from .batteryopt_interface import TariffModel  # Commented out due to incomplete implementation
 from src.energyoptimizer.batteryopt_utils import MIN_DT
 
@@ -42,7 +43,7 @@ class OptimizationInputs:
     backup_reserve: float = 0.2
     batt_rt_eff: float = 0.85
     batt_starting_soe: float | None = 0.5
-    solar_annualized_cost_per_kw: float | None = None
+    solar_annualized_cost_per_unit: float | None = None
     batt_annualized_cost_per_unit: float | None = None
 
 
@@ -51,6 +52,7 @@ class OptimizationInputs:
 class OptimizerOutputs:
     """Standardized output format for all optimizers."""
     results_df: pd.DataFrame | None = attrs.field(default=None)
+    result_columns = ['P_batt', 'P_grid', 'P_subpanel', 'E', 'solar_post_curtailment']
     status: str | None = attrs.field(default=None)
     sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": np.nan, "n_solar": np.nan})
     _intermediate_sizing_results = attrs.field(init=False, factory=lambda: {"n_batt_blocks": [], "n_solar": []})
@@ -88,9 +90,31 @@ class OptimizerOutputs:
     def finalize(self, start_time, end_time):
         self.trim(start_time, end_time)
         self.status = self._intermediate_status_list[-1]  # No-op for now
+        print("Intermediate sizing results:", self._intermediate_sizing_results)
         for k, v in self._intermediate_sizing_results.items():
             self.sizing_results[k] = np.mean(v)
 
+@attrs.define
+class WrappedOptimizerOutputs:
+    """Standardized output format for all optimizers."""
+    results_df: pd.DataFrame | None = attrs.field(default=None)
+    result_columns = ['P_batt', 'P_grid', 'P_subpanel', 'E', 'solar_post_curtailment']
+    status: str | None = attrs.field(default=None)
+    sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": np.nan, "n_solar": np.nan})
+    design_inputs: DesignInputs | None = None
+    financial_inputs: FinancialModelInputs | None = None
+
+    @classmethod
+    def from_optimization_resuls(cls, opt_results: OptimizerOutputs,
+                                 design_inputs: DesignInputs,
+                                 financial_inputs: FinancialModelInputs):
+        return cls(
+            results_df=opt_results.results_df,
+            status=opt_results.status,
+            sizing_results=opt_results.sizing_results,
+            design_inputs=design_inputs,
+            financial_inputs=financial_inputs
+        )
 
 def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     # Extract parameters from OptimizationInputs
@@ -205,6 +229,7 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
     demand_charge_s = opt_inputs.tariff_model.demand_charge_price_map.copy()
     demand_charge_s = demand_charge_s.loc[demand_charge_df.columns]
 
+
     assert site_data.index.equals(tariff.index), "Dataframes must have the same index"
     time_intervals = site_data.index.diff()[1:].unique()
     assert len(time_intervals) == 1, "Dataframes must have a constant-interval time index"
@@ -258,13 +283,8 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
                 E[0] == E_0
                 ]
 
-    for i, c in enumerate(demand_charge_df.columns):
-        power_in_demand_period = cp.Variable(n, nonneg=True)
-        constraints += [
-            power_in_demand_period == cp.multiply(demand_charge_df[c].values, P_grid_buy + P_grid_sell),
-        peak_demand[i] >= power_in_demand_period,
-            ]
-
+    for i, mask in enumerate(demand_charge_df.T.values):
+        constraints.append(peak_demand[i] >= cp.multiply(mask, P_grid_buy + P_grid_sell))
 
     # Note: Costs are positive, revenues negative, tariff is always positive but export flows are negative
     obj = cp.Minimize(P_grid_sell @ px_sell_dt + P_grid_buy @ px_buy_dt + peak_demand @ demand_charge_s.values)
@@ -495,7 +515,7 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_block_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
-    solar_annualized_cost_per_kw = opt_inputs.solar_annualized_cost_per_kw
+    solar_annualized_cost_per_kw = opt_inputs.solar_annualized_cost_per_unit
     batt_annualized_cost_per_unit = opt_inputs.batt_annualized_cost_per_unit
     integer_problem = opt_inputs.integer_problem
     
@@ -590,8 +610,8 @@ def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInp
     batt_rt_eff = opt_inputs.batt_rt_eff
     batt_block_e_max = opt_inputs.batt_block_e_max
     batt_p_max = opt_inputs.batt_block_p_max
-    solar_annualized_cost_per_kw = opt_inputs.solar_annualized_cost_per_kw
-    batt_annualized_cost_per_unit = opt_inputs.batt_annualized_cost_per_unit
+    solar_annualized_cost_per_kw = np.abs(opt_inputs.solar_annualized_cost_per_unit)
+    batt_annualized_cost_per_unit = np.abs(opt_inputs.batt_annualized_cost_per_unit)
     integer_problem = opt_inputs.integer_problem
 
     """Assumes that solar data in the site_data is per kW"""
@@ -664,13 +684,14 @@ def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInp
                    E[0] == E_0
                    ]
 
-    for i, c in enumerate(demand_charge_df.columns):
-        power_in_demand_period = cp.Variable(n, nonneg=True)
-        constraints += [
-            power_in_demand_period == cp.multiply(demand_charge_df[c].values, P_grid_buy + P_grid_sell),
-            peak_demand[i] >= power_in_demand_period,
-            ]
-
+    # for i, c in enumerate(demand_charge_df.columns):
+    #     power_in_demand_period = cp.Variable(n, nonneg=True)
+    #     constraints += [
+    #         power_in_demand_period == cp.multiply(demand_charge_df[c].values, P_grid_buy + P_grid_sell),
+    #         peak_demand[i] >= power_in_demand_period,
+    #         ]
+    for i, mask in enumerate(demand_charge_df.T.values):
+        constraints.append(peak_demand[i] >= cp.multiply(mask, P_grid_buy + P_grid_sell))
 
     obj = cp.Minimize(P_grid_sell @ px_sell_dt +
                       P_grid_buy @ px_buy_dt +
@@ -682,7 +703,7 @@ def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInp
     prob = cp.Problem(obj, constraints)
 
     opt_start = time.time()
-    prob.solve()
+    prob.solve(solver='Highs')
     if prob.status in ERROR_STATUS:
         return OptimizerOutputs(results_df=None, status=prob.status)
     print(f"Optimization done in {time.time() - opt_start :.3f} seconds")

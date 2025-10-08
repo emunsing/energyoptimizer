@@ -2,7 +2,8 @@ import pandas as pd
 import enum
 from typing import Optional, TYPE_CHECKING
 import attrs
-from .optimizers import (OptimizationInputs, OptimizerOutputs,
+from multiprocessing import Pool
+from .optimizers import (OptimizationInputs, OptimizerOutputs, WrappedOptimizerOutputs,
                          subpanel_self_consumption, single_panel_self_consumption,
                          tou_optimization, demand_charge_tou_optimization,
                          tou_endogenous_sizing_optimization, demand_charge_tou_endogenous_sizing_optimization,
@@ -21,6 +22,11 @@ OPTIMIZER_FUNCTIONS = {
     OptimizationType.DEMAND_CHARGE_TOU_OPTIMIZATION: demand_charge_tou_optimization,
     OptimizationType.TOU_ENDOGENOUS_SIZING: tou_endogenous_sizing_optimization,
     OptimizationType.DEMAND_CHARGE_TOU_SIZING_OPTIMIZATION: demand_charge_tou_endogenous_sizing_optimization,
+}
+
+OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP = {
+    OptimizationType.TOU_OPTIMIZATION.value: OptimizationType.TOU_ENDOGENOUS_SIZING.value,
+    OptimizationType.DEMAND_CHARGE_TOU_OPTIMIZATION.value: OptimizationType.DEMAND_CHARGE_TOU_SIZING_OPTIMIZATION.value,
 }
 
 
@@ -62,10 +68,9 @@ class OptimizationRunner:
         
         # Prepare tariff model
         tariff_model = self.inputs.design_inputs.tariff_model
-        
-        # Run optimization for each interval
-        optimization_results = OptimizerOutputs()
-        
+
+        opt_inputs_list = []
+
         for optimize_at, data_from, data_until in intervals:
             # Extract data for this interval
             full_visible_interval_data = site_data.loc[data_from:data_until - MIN_DT]
@@ -98,25 +103,55 @@ class OptimizationRunner:
                 max_n_solar=self.design_inputs.max_solar_units,
                 integer_problem=self.inputs.integer_problem,
                 batt_starting_soe=self.design_inputs.batt_starting_soe,
-                solar_annualized_cost_per_kw=self.financial_model_inputs.solar_levelized_unit_cost,
+                solar_annualized_cost_per_unit=self.financial_model_inputs.solar_levelized_unit_cost,
                 batt_annualized_cost_per_unit=self.financial_model_inputs.battery_levelized_unit_cost,
             )
-            
-            # Run the appropriate optimizer
-            optimizer_output = self._run_optimizer(opt_inputs)
-            optimization_results.append(optimizer_output)
+
+            opt_inputs_list.append(opt_inputs)
+
+        # Run the appropriate optimizer
+        optimization_results = self._run_optimizer_for_inputs_list(opt_inputs_list)
 
         # Combine all results and trim to the optimization period (results could be longer if `horizon` > 0)
         optimization_results.finalize(self.inputs.optimization_start, self.inputs.optimization_end)
 
-        return optimization_results
+        wrapped_optimization_results = WrappedOptimizerOutputs.from_optimization_resuls(
+            optimization_results,
+            design_inputs=self.design_inputs,
+            financial_inputs=self.financial_model_inputs)
+        return wrapped_optimization_results
     
     def _prepare_site_data(self) -> pd.DataFrame:
         """Prepare site data from design inputs."""
         # This would extract and format the site data from design_inputs
         # For now, assuming the design_inputs has the necessary data structure
         return self.design_inputs.site_data
-    
+
+    def _run_optimizer_for_inputs_list(self, opt_inputs_list) -> OptimizerOutputs:
+        # Run optimization for each interval
+        optimization_results = OptimizerOutputs()
+
+        optimizer_func = OPTIMIZER_FUNCTIONS.get(self.inputs.optimization_type)
+        if optimizer_func is None:
+            raise ValueError(f"Unknown optimization type: {self.inputs.optimization_type}")
+
+        if self.inputs.parallelize and len(opt_inputs_list) > 1:
+            # Run in parallel
+            with Pool(processes=self.inputs.n_jobs) as pool:
+                result_list = pool.map(optimizer_func, opt_inputs_list)
+        else:
+            # Run sequentially
+            result_list = []
+            for runner_inputs in opt_inputs_list:
+                result = optimizer_func(runner_inputs)
+                result_list.append(result)
+
+        optimization_results = OptimizerOutputs()
+        for result in result_list:
+            optimization_results.append(result)
+
+        return optimization_results
+
     def _run_optimizer(self, opt_inputs: OptimizationInputs) -> OptimizerOutputs:
         """Run the appropriate optimizer based on optimization type."""
         optimizer_func = OPTIMIZER_FUNCTIONS.get(self.inputs.optimization_type)

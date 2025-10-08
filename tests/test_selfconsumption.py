@@ -50,7 +50,7 @@ class TestSubpanelSelfConsumption:
             der_subpanel_export_kw_limit=test_case['der_subpanel_export_kw_limit'],
             site_import_kw_limit=test_case['site_import_kw_limit'],
             site_export_kw_limit=test_case['site_export_kw_limit'],
-            solar_annualized_cost_per_kw=0.15,
+            solar_annualized_cost_per_unit=0.15,
             batt_annualized_cost_per_unit=1000.0,
             integer_problem=False,
             min_n_batt_blocks=1,

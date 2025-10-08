@@ -3,19 +3,20 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Protocol, Callable
 import attrs
+import time
 from multiprocessing import Pool
 from functools import partial
 
-from .optimizers import OptimizerOutputs
+from .optimizers import OptimizerOutputs, WrappedOptimizerOutputs
 from .batteryopt_interface import (DesignInputs, FinancialModelInputs, ScenarioSpec, OptimizationType,
                                    OptimizationRunnerInputs, OptimizationClock, GeneralAssumptions,
                                    DesignSpec, TariffSpec, FinancialSpec, PRODUCT_TO_SIZING_OUTPUT_MAP)
-from .optimization_runner import OptimizationRunner
+from .optimization_runner import OptimizationRunner, OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP
 from .batteryopt_utils import SUCCESS_STATUS
 from .tariff.tariff_utils import TariffModel
 
 
-def _run_single_optimization(runner_inputs: OptimizationRunnerInputs) -> OptimizerOutputs:
+def _run_single_optimization(runner_inputs: OptimizationRunnerInputs) -> WrappedOptimizerOutputs:
     """
     Helper function to run a single optimization.
     This is used for parallel processing.
@@ -24,7 +25,7 @@ def _run_single_optimization(runner_inputs: OptimizationRunnerInputs) -> Optimiz
     result = runner.run_optimization()
     if result.status not in SUCCESS_STATUS:
         print(f"Warning: Optimization ended with status {result.status}")
-        result = OptimizerOutputs(status=result.status)
+        result = WrappedOptimizerOutputs(status=result.status)
     return result
 
 
@@ -74,19 +75,14 @@ class ResultSummarizer(Protocol):
     """Protocol for result summarization classes."""
     
     def summarize(self, 
-                 optimizer_results: OptimizerOutputs,
-                 design_inputs: DesignInputs, 
-                 financial_inputs: FinancialModelInputs,
-                 tariff_model: TariffModel,
+                 optimizer_results: WrappedOptimizerOutputs,
                   remove_baseline: bool=True) -> ResultSummary:
         """
         Summarize optimization results into a standardized format.
         
         Args:
             optimizer_results: Results from the optimization
-            design_inputs: Design parameters used
-            financial_inputs: Financial model inputs
-            tariff_model: Tariff model used
+            remove_baseline: Whether to remove baseline (no DER) scenario from results
             
         Returns:
             ResultSummary containing summarized data
@@ -97,22 +93,22 @@ class BasicResultSummarizer:
     """Basic implementation of ResultSummarizer that creates comprehensive summaries."""
     
     def summarize(self,
-                 optimizer_results: OptimizerOutputs,
-                 design_inputs: DesignInputs, 
-                 financial_inputs: FinancialModelInputs,
-                 tariff_model: TariffModel) -> ResultSummary:
+                 optimizer_results: WrappedOptimizerOutputs,
+                  remove_baseline=False
+                  ) -> ResultSummary:
         """
         Create a comprehensive summary of optimization results.
         """
+        design_inputs = optimizer_results.design_inputs
+        financial_inputs = optimizer_results.financial_inputs
+        tariff_model = optimizer_results.design_inputs.tariff_model
         results_df = optimizer_results.results_df
         combined_timeseries = pd.concat([results_df,
                                          design_inputs.site_data,
                                          tariff_model.tariff_timeseries
                                          ], axis=1).loc[results_df.index]
         billing_cycles = tariff_model.compute_bill_series(results_df['P_grid'])
-        annual_financial_timeseries = self._create_annual_financial_timeseries(optimization_results=optimizer_results,
-                                                                               tariff_model=tariff_model,
-                                                                               financial_inputs=financial_inputs)
+        annual_financial_timeseries = self._create_annual_financial_timeseries(optimization_results=optimizer_results)
         annual_nonfinancial_timeseries = self._create_annual_nonfinancial_timeseries(results_df=results_df,
                                                                                      design_inputs=design_inputs,
                                                                                      tariff_model=tariff_model)
@@ -170,11 +166,12 @@ class BasicResultSummarizer:
         return annual_data_df
 
     @staticmethod
-    def _create_annual_financial_timeseries(optimization_results: OptimizerOutputs,
-                                           tariff_model: TariffModel,
-                                             financial_inputs: FinancialModelInputs
+    def _create_annual_financial_timeseries(optimization_results: WrappedOptimizerOutputs,
                                            ) -> pd.DataFrame:
+        tariff_model = optimization_results.design_inputs.tariff_model
+        financial_inputs = optimization_results.financial_inputs
         results_df = optimization_results.results_df
+
         billing_cycle_data = tariff_model.compute_bill_series(results_df['P_grid'])
         annual_billing_cycles = billing_cycle_data.resample('1YS').sum()
         annual_billing_cycles.columns.name = 'expense_type'
@@ -259,6 +256,9 @@ class ScenarioRunner(ABC):
         self.design_inputs = self.scenario_spec.build_design_inputs()
         self.financial_inputs = self.scenario_spec.build_financial_model_inputs()
         self.tariff_model = self.scenario_spec.build_tariff()
+        self.optimization_clock = OptimizationClock(frequency=self.scenario_spec.general_assumptions.optimization_clock,
+                                                    horizon=self.scenario_spec.general_assumptions.optimization_clock_horizon,
+                                                    lookback=self.scenario_spec.general_assumptions.optimization_clock_lookback)
         
         # Storage for results
         self.optimizer_results: List[OptimizerOutputs] = []
@@ -272,7 +272,7 @@ class ScenarioRunner(ABC):
         """
         pass
     
-    def _run_optimizations(self, runner_inputs_list: List[OptimizationRunnerInputs]) -> List[OptimizerOutputs]:
+    def _run_optimizations(self, runner_inputs_list: List[OptimizationRunnerInputs]) -> List[WrappedOptimizerOutputs]:
         """
         Run optimizations either sequentially or in parallel.
         
@@ -308,12 +308,7 @@ class ScenarioRunner(ABC):
         # Apply result summarizer to each result
         self.result_summaries = []
         for optimizer_result in self.optimizer_results:
-            summary = self.result_summarizer.summarize(
-                optimizer_result, 
-                self.design_inputs,
-                self.financial_inputs,
-                self.tariff_model
-            )
+            summary = self.result_summarizer.summarize(optimizer_result)
             self.result_summaries.append(summary)
         
         return self.result_summaries
@@ -355,9 +350,7 @@ class SizingSweepScenarioRunner(ScenarioRunner):
                     optimization_end=self.scenario_spec.general_assumptions.end_date,
                     design_inputs=modified_design_input,
                     financial_model_inputs=self.financial_inputs,
-                    optimization_clock=OptimizationClock(frequency=self.scenario_spec.general_assumptions.optimization_clock,
-                                                         horizon=self.scenario_spec.general_assumptions.optimization_clock_horizon,
-                                                         lookback=self.scenario_spec.general_assumptions.optimization_clock_lookback),
+                    optimization_clock=self.optimization_clock,
                     parallelize=False
                 )
                 
@@ -377,20 +370,28 @@ class TopNScenarioRunner(ScenarioRunner):
         """
         n_closest = kwargs.pop('n_closest', 5)
         respect_bounds = kwargs.pop('respect_bounds', True)
+        fixed_size_run_clock = kwargs.pop('optimization_clock', None)
         super().__init__(*args, **kwargs)
         self.n_closest = n_closest
         self.endogenous_result = None
         self.respect_bounds = respect_bounds
+        if fixed_size_run_clock:
+            self.fixed_size_run_clock = fixed_size_run_clock
+        else:
+            self.fixed_size_run_clock = self.optimization_clock
     
     def _build_runner_inputs_list(self) -> List[OptimizationRunnerInputs]:
         """
         Build list of optimization runner inputs for endogenous sizing and N closest scenarios.
         """
         # Step 1: Run endogenous sizing optimization first (this can't be parallelized easily)
+        start_time = time.time()
         self.endogenous_result = self._run_endogenous_sizing()
-        
+        print("Endogenous sizing completed in {:.2f} seconds".format(time.time() - start_time))
+
         # Step 2: Extract optimal sizing
         optimal_sizing = self.endogenous_result.sizing_results
+        print("Endogenous sizing optimal sizes: ", optimal_sizing)
         optimal_point = (optimal_sizing['n_solar'], optimal_sizing['n_batt_blocks'])
         
         # Step 3: Find N closest integer points
@@ -423,7 +424,7 @@ class TopNScenarioRunner(ScenarioRunner):
                 optimization_end=self.scenario_spec.general_assumptions.end_date,
                 design_inputs=modified_design_input,
                 financial_model_inputs=self.financial_inputs,
-                optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
+                optimization_clock=self.fixed_size_run_clock,
                 parallelize=False
             )
             runner_inputs_list.append(runner_inputs)
@@ -432,28 +433,19 @@ class TopNScenarioRunner(ScenarioRunner):
     def _run_endogenous_sizing(self) -> OptimizerOutputs:
         """Run endogenous sizing optimization to find optimal continuous sizing."""
         # Create scenario spec with endogenous sizing enabled
-        endogenous_spec = ScenarioSpec(
-            general_assumptions=attrs.evolve(
-                self.scenario_spec.general_assumptions,
-                optimization_type='tou_endogenous_sizing'  # Use endogenous sizing type
-            ),
-            design_spec=self.scenario_spec.design_spec,
-            tariff_spec=self.scenario_spec.tariff_spec,
-            financial_spec=self.scenario_spec.financial_spec
-        )
-        
-        # Build inputs and run optimization
-        design_inputs = endogenous_spec.build_design_inputs()
-        financial_inputs = endogenous_spec.build_financial_model_inputs()
-        
+        baseline_optimization_type = self.scenario_spec.general_assumptions.optimization_type
+        assert baseline_optimization_type in OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP, f"Use TopNScenarioRunner with an optimization_type in {OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP.keys()}"
+        updated_optimization_type = OPTIMIZER_CONVENTIONAL_TO_ENDOGENOUS_MAP[baseline_optimization_type]
+
         runner_inputs = OptimizationRunnerInputs(
-            optimization_type=OptimizationType.TOU_ENDOGENOUS_SIZING,
+            optimization_type=OptimizationType(updated_optimization_type),
             optimization_start=self.scenario_spec.general_assumptions.start_date,
             optimization_end=self.scenario_spec.general_assumptions.end_date,
-            design_inputs=design_inputs,
-            financial_model_inputs=financial_inputs,
-            optimization_clock=OptimizationClock(frequency='1YS', horizon=None, lookback=None),
-            parallelize=False
+            design_inputs=self.design_inputs,
+            financial_model_inputs=self.financial_inputs,
+            optimization_clock=self.optimization_clock,
+            parallelize=True,
+            n_jobs=self.n_jobs
         )
-        
+
         return _run_single_optimization(runner_inputs)

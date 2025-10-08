@@ -17,7 +17,6 @@ BASE_GENERAL_ASSUMPTIONS = GeneralAssumptions(
     study_years=20,
     optimization_type='tou_endogenous_sizing',
     study_resolution='1h',
-    endogenous_sizing=True,
     optimization_clock='1YS',  # TODO: Confirm that this changes the clock
     optimization_clock_horizon=pd.DateOffset(months=12),
 )   
