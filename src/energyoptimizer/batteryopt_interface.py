@@ -330,8 +330,7 @@ class FinancialSpec:
 
     @staticmethod
     def _get_zero_cash_flow_df(study_years):
-        cash_flow_df_cols = ['capital_cost', 'residual_value', 'soft_cost', 'itc_credit',
-                             'energy_charges', 'demand_charges', 'total_charges', 'ppa_cost']
+        cash_flow_df_cols = ['capital_cost', 'residual_value', 'soft_cost', 'itc_credit']
         return pd.DataFrame(0.0, index=range(study_years), columns=cash_flow_df_cols)
 
     def _initialize_cash_flow_df(self, study_years):
@@ -354,7 +353,6 @@ class FinancialSpec:
                                         study_years: int,
                                         product_spec: ProductFinancialSpec
     ) -> pd.DataFrame:
-
         cash_flows = self._get_zero_cash_flow_df(study_years)
 
         # Replacement times in years (including t=0 for initial install)
@@ -376,7 +374,8 @@ class FinancialSpec:
             base_cost = future_capital_cost + future_labor_cost
             apply_itc = (t == 0) or product_spec.itc_applies_to_replacement
             if apply_itc:
-                base_cost *= (1- product_spec.itc_rate)
+                cash_flows.at[t, 'itc_credit'] = base_cost * product_spec.itc_rate
+                # base_cost *= (1- product_spec.itc_rate)
 
             cash_flows.at[t, 'capital_cost'] -= future_capital_cost
 
@@ -389,7 +388,6 @@ class FinancialSpec:
             depreciation_cost = base_cost * (1 - product_spec.residual_value) * portion_depreciation_period
             residual_value = base_cost - depreciation_cost
             cash_flows.at[retirement_year, 'residual_value'] += residual_value  # Credit at retirement year
-
 
         return cash_flows
 
