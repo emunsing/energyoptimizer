@@ -174,7 +174,6 @@ class DesignSpec:
                 solar_series = shift_copy_dataset_to_new_index(input_dataset=solar_series,
                                                                new_time_index=time_index,)
 
-
                 # Linear solar panel decay after the initial decay
                 solar_decay_multipliers = [1.0] + [1.0 - self.solar_first_year_degradation - self.solar_subsequent_year_degradation * i for i in
                  range(experiment_duration_years - 1)]
