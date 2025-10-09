@@ -53,6 +53,7 @@ class OptimizerOutputs:
     results_df: pd.DataFrame | None = attrs.field(default=None)
     result_columns = ['P_batt', 'P_grid', 'P_subpanel', 'E', 'solar_post_curtailment']
     status: str | None = attrs.field(default=None)
+    objective_value: float | None = attrs.field(default=None)
     sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": np.nan, "n_solar": np.nan})
     _intermediate_sizing_results = attrs.field(init=False, factory=lambda: {"n_batt_blocks": [], "n_solar": []})
     _intermediate_status_list = attrs.field(init=False, factory=list)
@@ -89,7 +90,10 @@ class OptimizerOutputs:
     def finalize(self, start_time, end_time):
         self.trim(start_time, end_time)
         self.status = self._intermediate_status_list[-1]  # No-op for now
-        print("Intermediate sizing results:", self._intermediate_sizing_results)
+        print("Intermediate sizing results (all):")
+        intermediate_results = pd.DataFrame.from_dict(self._intermediate_sizing_results)
+        print(intermediate_results)
+        print(intermediate_results.to_dict())
         for k, v in self._intermediate_sizing_results.items():
             self.sizing_results[k] = np.mean(v)
 
@@ -99,14 +103,15 @@ class WrappedOptimizerOutputs:
     results_df: pd.DataFrame | None = attrs.field(default=None)
     result_columns = ['P_batt', 'P_grid', 'P_subpanel', 'E', 'solar_post_curtailment']
     status: str | None = attrs.field(default=None)
+    objective_value: float | None = attrs.field(default=None)
     sizing_results: dict = attrs.field(factory=lambda: {"n_batt_blocks": np.nan, "n_solar": np.nan})
     design_inputs: DesignInputs | None = None
     financial_inputs: FinancialModelInputs | None = None
 
     @classmethod
-    def from_optimization_resuls(cls, opt_results: OptimizerOutputs,
-                                 design_inputs: DesignInputs,
-                                 financial_inputs: FinancialModelInputs):
+    def from_optimization_results(cls, opt_results: OptimizerOutputs,
+                                  design_inputs: DesignInputs,
+                                  financial_inputs: FinancialModelInputs):
         return cls(
             results_df=opt_results.results_df,
             status=opt_results.status,
@@ -201,7 +206,9 @@ def tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
                                   'E': E[1:].value,
                                   'solar_post_curtailment': solar_post_curtailment.value
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(results_df=res, status=prob.status, sizing_results=sizing_results)
+    return OptimizerOutputs(results_df=res, status=prob.status,
+                            objective_value=prob.value,
+                            sizing_results=sizing_results)
 
 def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     # Extract parameters from OptimizationInputs
@@ -300,7 +307,9 @@ def demand_charge_tou_optimization(opt_inputs: OptimizationInputs) -> OptimizerO
                                   'E': E[1:].value,
                                   'solar_post_curtailment': solar_post_curtailment.value
                                   }).set_index(site_data.index)
-    return OptimizerOutputs(results_df=res, status=prob.status, sizing_results=sizing_results)
+    return OptimizerOutputs(results_df=res, status=prob.status,
+                            objective_value=prob.value,
+                            sizing_results=sizing_results)
 
 def single_panel_self_consumption(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
     """
@@ -597,7 +606,9 @@ def tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> Optimi
                         'solar_post_curtailment': solar_post_curtailment.value,
                               }).set_index(site_data.index,)
     sizing_results = {'n_batt_blocks': n_batts.value, 'n_solar': s_size.value}
-    return OptimizerOutputs(results_df=res, sizing_results=sizing_results, status=prob.status)
+    return OptimizerOutputs(results_df=res, sizing_results=sizing_results,
+                            objective_value=prob.value,
+                            status=prob.status)
 
 
 def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInputs) -> OptimizerOutputs:
@@ -709,4 +720,6 @@ def demand_charge_tou_endogenous_sizing_optimization(opt_inputs: OptimizationInp
                                   'solar_post_curtailment': solar_post_curtailment.value,
                                   }).set_index(site_data.index, )
     sizing_results = {'n_batt_blocks': n_batts.value, 'n_solar': s_size_kw.value}
-    return OptimizerOutputs(results_df=res, sizing_results=sizing_results, status=prob.status)
+    return OptimizerOutputs(results_df=res, sizing_results=sizing_results,
+                            objective_value=prob.value,
+                            status=prob.status)

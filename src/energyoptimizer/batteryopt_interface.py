@@ -132,6 +132,7 @@ class DesignSpec:
     solar_data: Optional[pd.DataFrame] = None  # For uploaded data
     solar_first_year_degradation: float = 0.015
     solar_subsequent_year_degradation: float = 0.008
+    solar_panel_original_install_year: int | None = None  # Advance the start of solar decay by this many years (for used panels, etc)
     
     # Circuit load data source configuration
     circuit_load_data_source: str = "upload"  # "upload", "ev_modeler"
@@ -143,13 +144,16 @@ class DesignSpec:
     facility_sqft: Optional[float] = None  # For flat load profile
     annual_eui: Optional[float] = None  # kWh/sqft-yr for flat load profile
 
+    def __attrs_post_init__(self):
+        self.validate_inputs()
+
     def validate_inputs(self):
         assert self.min_battery_units >= 0 and self.max_battery_units >= self.min_battery_units, "Invalid battery unit constraints"
         assert self.min_solar_units >= 0 and self.max_solar_units >= self.min_solar_units, "Invalid solar unit constraints"
-        assert der_subpanel_import_kw_limit >= 0, "Circuit import limit must be non-negative"
-        assert der_subpanel_export_kw_limit <= 0, "Circuit export limit must be non-positive"
-        assert site_import_limit >= 0, "Site import limit must be non-negative"
-        assert site_export_limit <= 0, "Site export limit must be non-positive"
+        assert self.der_subpanel_import_kw_limit >= 0, "Circuit import limit must be non-negative"
+        assert self.der_subpanel_export_kw_limit <= 0, "Circuit export limit must be non-positive"
+        assert self.site_import_limit >= 0, "Site import limit must be non-negative"
+        assert self.site_export_limit <= 0, "Site export limit must be non-positive"
 
 
     def build_solar_timeseries(self, time_index: pd.DatetimeIndex) -> pd.Series:

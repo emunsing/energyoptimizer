@@ -49,7 +49,10 @@ class TariffModel:
     energy charges, demand charges, and total bills for given power series.
     """
     
-    def __init__(self, tariff_file: str, rate_code: str, start_date: date, end_date: date, rate_escalator: float = 0.0, output_freq: str = '15min'):
+    def __init__(self, tariff_file: str, rate_code: str, start_date: date, end_date: date,
+                 rate_escalator: float = 0.0,
+                 rate_escalator_offset: int = 0,
+                 output_freq: str = '15min'):
         """
         Initialize the TariffModel with tariff configuration and date range.
         
@@ -57,11 +60,13 @@ class TariffModel:
             tariff_file: Path to the tariff YAML file
             start_date: Start date for the tariff model
             end_date: End date for the tariff model
+            rate_escalator_offset: Positive: Apply extra years of escalation. Negative: Deflate rate.
         """
         self.start_date = pd.Timestamp(start_date)
         self.end_date = pd.Timestamp(end_date)
         self.years = range(self.start_date.year, self.end_date.year + 1)
         self.rate_escalator = rate_escalator
+        self.rate_escalator_offset = rate_escalator_offset
         self.output_freq = output_freq
         
         # Load tariff configuration
@@ -176,7 +181,7 @@ class TariffModel:
         self.season_period_masks = pd.DataFrame(season_period_masks)
 
         # Apply rate escalator over the years
-        escalators = [(1 + self.rate_escalator) ** i for i in range(len(self.years))]
+        escalators = [(1 + self.rate_escalator) ** (i + self.rate_escalator_offset) for i in range(len(self.years))]
         escalator_series = pd.Series(escalators, index=self.years)
 
         import_rates = pd.Series(season_period_import_rates).fillna(0)

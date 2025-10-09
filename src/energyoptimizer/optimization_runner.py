@@ -115,7 +115,7 @@ class OptimizationRunner:
         # Combine all results and trim to the optimization period (results could be longer if `horizon` > 0)
         optimization_results.finalize(self.inputs.optimization_start, self.inputs.optimization_end)
 
-        wrapped_optimization_results = WrappedOptimizerOutputs.from_optimization_resuls(
+        wrapped_optimization_results = WrappedOptimizerOutputs.from_optimization_results(
             optimization_results,
             design_inputs=self.design_inputs,
             financial_inputs=self.financial_model_inputs)

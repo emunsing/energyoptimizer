@@ -25,7 +25,9 @@ def _run_single_optimization(runner_inputs: OptimizationRunnerInputs) -> Wrapped
     result = runner.run_optimization()
     if result.status not in SUCCESS_STATUS:
         print(f"Warning: Optimization ended with status {result.status}")
-        result = WrappedOptimizerOutputs(status=result.status)
+        result = WrappedOptimizerOutputs(status=result.status,
+                                         design_inputs=runner_inputs.design_inputs,
+                                         financial_inputs=runner_inputs.financial_model_inputs)
     return result
 
 
@@ -143,7 +145,12 @@ class BasicResultSummarizer:
         
         annual_data = {}
         annual_data['uncurtailed_solar_kwh'] = design_inputs.site_data['solar'] * sizing_results['n_solar'] * dt_hours
-        
+        annual_data['solar_post_curtailment'] = results_df['solar_post_curtailment'] * dt_hours
+        e_batt_kwh = results_df['P_batt'].clip(lower=0) * dt_hours
+        annual_data['batt_dispatch_kwh'] = e_batt_kwh * dt_hours
+        batt_internal_energy_delta = e_batt_kwh / design_inputs.batt_rt_eff ** 0.5
+        annual_data['battery_cycles'] = batt_internal_energy_delta / (design_inputs.batt_block_e_max * sizing_results['n_batt_blocks'])
+
         # Curtailed solar energy production (kWh)
         curtailed_solar = design_inputs.site_data['solar'] * sizing_results['n_solar'] - results_df['solar_post_curtailment']
         annual_data['curtailed_solar_kwh'] = curtailed_solar * dt_hours
@@ -192,9 +199,12 @@ class BasicResultSummarizer:
         cash_flow_product_labels = []
         cash_flow_dataframes = []
         for product, cash_flows in financial_inputs.product_cash_flows.items():
-            cash_flow_product_labels = cash_flow_product_labels + [product] * cash_flows.unit_cash_flows.shape[1]
+            # cash_flow_product_labels = cash_flow_product_labels + [product] * cash_flows.unit_cash_flows.shape[1]
             n_product = optimization_results.sizing_results.get(PRODUCT_TO_SIZING_OUTPUT_MAP[product], 0)
-            cash_flow_dataframes.append(n_product * cash_flows.unit_cash_flows)
+            scaled_cash_flow_df = n_product * cash_flows.unit_cash_flows.copy()
+            scaled_cash_flow_df.loc[:, 'annualized_cost'] = cash_flows.unit_annualized_cost * n_product
+            cash_flow_product_labels = cash_flow_product_labels + [product] * scaled_cash_flow_df.shape[1]
+            cash_flow_dataframes.append(scaled_cash_flow_df)
 
         cash_flow_df = pd.concat(cash_flow_dataframes, axis=1)
         cash_flow_df.columns.name = 'expense_type'
@@ -314,9 +324,15 @@ class ScenarioRunner(ABC):
         # Apply result summarizer to each result
         self.result_summaries = []
         for optimizer_result in self.optimizer_results:
+            if optimizer_result.status not in SUCCESS_STATUS or optimizer_result.results_df is None:
+                print(f"Warning: Optimization ended with no results and status {optimizer_result.status}; skipping")
+                continue
             summary = self.result_summarizer.summarize(optimizer_result)
             self.result_summaries.append(summary)
-        
+
+        if len(self.result_summaries) == 0:
+            print("Warning: No successful optimizations to summarize!")
+
         return self.result_summaries
     
     def get_result_summaries(self) -> List[ResultSummary]:
@@ -376,7 +392,7 @@ class TopNScenarioRunner(ScenarioRunner):
         """
         n_closest = kwargs.pop('n_closest', 5)
         respect_bounds = kwargs.pop('respect_bounds', True)
-        fixed_size_run_clock = kwargs.pop('optimization_clock', None)
+        fixed_size_run_clock = kwargs.pop('optimization_clock', None)  # TopNScenarioRunner Separate clock for fixed-size runs, which are less computationally heavy. By default, the clock is set from the GeneralAssumptions.
         super().__init__(*args, **kwargs)
         self.n_closest = n_closest
         self.endogenous_result = None
