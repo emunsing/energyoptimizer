@@ -37,7 +37,7 @@ class SalesEngineeringInputs:
 
     # Study parameters
     start_date: str = '2026-01-01'
-    study_years: int = 20
+    study_years: int = 2
     optimize_sizing: bool = False  # If True, run sizing_optimizer; else sizing_sweep
 
     # DataFrames (required uploads)
@@ -94,8 +94,6 @@ class SalesEngineeringInputs:
         scenario_study = ScenarioStudy(
             start_date=self.start_date,
             study_years=self.study_years,
-            clock_years=self.clock_years,
-            top_n_scenarios=self.top_n_scenarios,
             # Timeseries
             unit_solar_timeseries_kw=self.unit_solar_timeseries_kw,
             der_subpanel_load_kw=self.der_subpanel_load_kw,
@@ -167,9 +165,6 @@ class SalesEngineeringOutputs:
     optimization_status: str | None = None
     financial_summary: dict | None = None
 
-    # Store the full result for detailed inspection if needed
-    _full_result: ResultSummary | None = attrs.field(default=None, repr=False)
-
     @classmethod
     def from_result_summary(cls, result: ResultSummary, scenario_id: int | None = None) -> 'SalesEngineeringOutputs':
         """Create WebOutputs from a ResultSummary object."""
@@ -179,7 +174,6 @@ class SalesEngineeringOutputs:
             sizing_results=result.sizing_results,
             optimization_status=result.optimization_status,
             financial_summary=result.financial_summary,
-            _full_result=result
         )
 
     def render_summary_table(self) -> str:

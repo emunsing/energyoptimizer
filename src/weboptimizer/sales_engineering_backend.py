@@ -69,10 +69,17 @@ class ScenarioStudy:
         assert len(overlapping_columns) > 0, f"Solar data must have exactly one of these columns: {target_column_synonyms}"
 
         try:
-            df.index = pd.to_datetime(df.index)
-            time_deltas = df.index.to_series().diff()
-            assert len(time_deltas.unique()) == 1, "Solar data index must have consistent frequency"
-        except:
+            if not isinstance(df.index, pd.DatetimeIndex):
+                try:
+                    df.index = pd.to_datetime(df.index)
+                except ValueError as e:
+                    if "Tz-aware datetime.datetime cannot be converted to datetime64 unless utc=True" in str(e):
+                        df.index = pd.to_datetime(df.index, utc=True).tz_convert(TIMEZONE)
+                    else:
+                        raise e
+            time_deltas = df.index.to_series().diff().unique()
+            assert len(time_deltas) == 1, "Solar data index must have consistent frequency"
+        except AssertionError as e:
             assert df.shape[0] == 8760, "Inferring time, assuming hourly starting Jan 1: Solar data must have 8760 rows"
             target_yr = 2005
             df['updated_timestamp'] = pd.date_range(start=f"{target_yr}-01-01 00:00", freq="1h",
@@ -80,18 +87,16 @@ class ScenarioStudy:
             df = df.set_index('updated_timestamp')[overlapping_columns].copy()
             df = df.resample('1h').ffill().fillna(0)
 
-        if df.max() > 1000:
-            print("Assuming solar data is in W, converting to kW")
-            df = df / 1000
-
         df = df.rename({c: target_column_name for c in overlapping_columns}, axis=1)
         return df
 
     def __attrs_post_init__(self):
         self.unit_solar_timeseries_kw = self.validate_input_df(self.unit_solar_timeseries_kw,
-                                                      target_column_synonyms=['solar', 'ac_power_kw'],
+                                                      target_column_synonyms=['solar', 'ac_power'],
                                                       target_column_name = 'solar',
                                                       )
+        if self.unit_solar_timeseries_kw['solar'].max() > 500:
+            self.unit_solar_timeseries_kw /= 1000
         self.der_subpanel_load_kw = self.validate_input_df(self.der_subpanel_load_kw,
                                                         target_column_synonyms=['der_subpanel_load', 'load_kw', 'load'],
                                                         target_column_name='der_subpanel_load',
