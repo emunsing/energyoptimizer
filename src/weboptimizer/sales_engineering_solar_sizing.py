@@ -569,11 +569,14 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
                         new_inputs = attrs.evolve(current_inputs, id=new_idx, scenario_name=result_output.scenario_name)
                     
                     # Create new scenario with same inputs but different output
+                    new_output = attrs.evolve(result_output, id=new_idx)
                     new_scenario = SalesEngineeringScenario(
                         id=new_idx,
                         inputs=new_inputs,
-                        outputs=attrs.evolve(result_output, id=new_idx)
+                        outputs=new_output
                     )
+                    # Add output to registry so it appears in consolidated results
+                    scenario_outputs_registry[new_idx] = new_output
                     add_callback(new_idx, new_scenario)
 
             # Update consolidated results
