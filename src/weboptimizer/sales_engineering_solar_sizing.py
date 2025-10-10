@@ -371,7 +371,8 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
 
     scenario_box = pn.Column(
         pn.pane.Markdown(f"## Scenario {scenario.id}"),
-        pn.Row(compute_btn, copy_btn, remove_btn, status_text),
+        pn.Row(status_text),
+        pn.Row(compute_btn, copy_btn, remove_btn),
 
         study_params_header,
         pn.Row(start_date_input, study_years_input),
@@ -394,7 +395,7 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
 
         output_display,
 
-        sizing_mode="stretch_width",
+        sizing_mode="fixed",
         styles={
             "border": "2px solid #ddd",
             "padding": "15px",
@@ -402,7 +403,7 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
             "background": "#f9f9f9",
             "border-radius": "5px"
         },
-        width=500
+        width=400
     )
 
     # ===== Helper Functions =====
@@ -624,14 +625,13 @@ def create_app():
         add_scenario(next_idx, default_scenario)
         pn.state.notifications.info(f"Scenario {next_idx} added")
 
-    print("Starting Sales Engineering Solar Sizing App...")
     scenarios = {}
     scenario_outputs = {}
 
     # UI containers
     scenarios_container = pn.Row(
         styles={"overflow-x": "auto", "flex-wrap": "nowrap"},
-        sizing_mode="stretch_width"
+        # sizing_mode="stretch_width"
     )
 
     consolidated_results_display = pn.widgets.TextAreaInput(
@@ -642,12 +642,9 @@ def create_app():
         styles={"font-family": "monospace", "font-size": "12px"}
     )
 
-
     # Add Scenario button
     add_btn = pn.widgets.Button(name="➕ Add Scenario", button_type="success", width=150)
     add_btn.on_click(on_add_scenario)
-
-    print("Pre-initialization")
 
     # Initialize with one scenario
     initial_scenario = SalesEngineeringScenario(
@@ -657,7 +654,6 @@ def create_app():
     )
     add_scenario(1, initial_scenario)
 
-    print("Got as far as layout")
     app = pn.Column(
         pn.pane.Markdown("# Sales Engineering: Solar + Battery Sizing"),
         pn.pane.Markdown("""
@@ -670,7 +666,6 @@ def create_app():
         consolidated_results_display,
         sizing_mode="stretch_width"
     )
-    print("Laid out a thing")
     return app
 
 app = create_app()
