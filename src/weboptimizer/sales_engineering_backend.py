@@ -3,16 +3,13 @@ import pathlib
 import pandas as pd
 import numpy as np
 import datetime
-import click
 import pickle
 import time
 import attrs
-import cattr
 from attrs import asdict
 from energyoptimizer.batteryopt_interface import DesignSpec, GeneralAssumptions, FinancialSpec, TariffSpec, ScenarioSpec
 from energyoptimizer.tariff.tariff_utils import TariffModel
 from energyoptimizer.scenario_runner import SizingSweepScenarioRunner, TopNScenarioRunner, BasicResultSummarizer
-from gridwave_designer.load_utils import build_2x10_ev_load_from_breaks, build_2x8_ev_load_from_breaks
 from pandas.tseries.frequencies import to_offset
 
 TIMEZONE = 'US/Pacific'
@@ -38,20 +35,19 @@ class ScenarioStudy:
     site_max_capacity_amps: int = 400
     site_allows_export: bool = False
     panel_voltage: int = 480
-    battery_unit_size = 0.7 * 210 # kWh  # Sizing at end of life
-    battery_unit_size = 0.55 * 210  # kWh  # Sizing at end of life
-    battery_unit_power = 60  # kW
-    min_battery_units = 0
-    max_battery_units = 5
-    min_solar_units = 0
-    max_solar_units = 30
+    battery_unit_size: int = 210 # kWh  # Sizing at end of life
+    battery_unit_power: int = 60  # kW
+    min_battery_units: int = 0
+    max_battery_units: int = 5
+    min_solar_units: int = 0
+    max_solar_units: int = 30
 
     # Financial assumptions
     solar_capital_cost_per_unit: float = 156e3
     battery_capital_cost_per_unit: float = 89444 + 5000 + 11441 + 38000  # includes inverter
-    solar_lifetime = 20
+    solar_lifetime: int = 20
     solar_residual_value_end_of_life: float = 0.0
-    battery_lifetime = 20
+    battery_lifetime: int = 20
     battery_residual_value_end_of_life: float = 0.0
     discount_rate: float = 0.00
     itc_rate: float = 0.30
@@ -230,6 +226,8 @@ class ScenarioStudy:
         return results
 
     def sizing_optimizer(self):
+        assert self.min_battery_units < self.max_battery_units or self.min_solar_units < self.max_solar_units, "For sizing sweep, must have an unconstrained variable"
+
         scenario_spec = ScenarioSpec(
             general_assumptions=self.general_assumptions,
             design_spec=self.design_spec,
