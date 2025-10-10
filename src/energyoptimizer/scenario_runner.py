@@ -3,6 +3,7 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Protocol, Callable
 import attrs
+import os
 import time
 from multiprocessing import Pool
 from functools import partial
@@ -319,7 +320,18 @@ class ScenarioRunner(ABC):
         runner_inputs_list = self._build_runner_inputs_list()
         
         # Run optimizations (sequentially or in parallel)
-        self.optimizer_results = self._run_optimizations(runner_inputs_list)
+        result_cache_file = '/Users/eric/Desktop/temp_results.pkl'
+        if os.path.exists(result_cache_file):
+            import pickle
+            with open(result_cache_file, 'rb') as f:
+                self.optimizer_results = pickle.load(f)
+        else:
+            self.optimizer_results = self._run_optimizations(runner_inputs_list)
+            with open(result_cache_file, 'wb') as f:
+                import pickle
+                pickle.dump(self.optimizer_results, f)
+
+        # self.optimizer_results = self._run_optimizations(runner_inputs_list)
         
         # Apply result summarizer to each result
         self.result_summaries = []
@@ -408,7 +420,19 @@ class TopNScenarioRunner(ScenarioRunner):
         """
         # Step 1: Run endogenous sizing optimization first (this can't be parallelized easily)
         start_time = time.time()
-        self.endogenous_result = self._run_endogenous_sizing()
+
+        result_cache_file = '/Users/eric/Desktop/temp_endogenous_results.pkl'
+        if os.path.exists(result_cache_file):
+            import pickle
+            with open(result_cache_file, 'rb') as f:
+                self.endogenous_result = pickle.load(f)
+        else:
+            self.endogenous_result = self._run_endogenous_sizing()
+            with open(result_cache_file, 'wb') as f:
+                import pickle
+                pickle.dump(self.endogenous_result, f)
+
+        # self.endogenous_result = self._run_endogenous_sizing()
         print("Endogenous sizing completed in {:.2f} seconds".format(time.time() - start_time))
 
         # Step 2: Extract optimal sizing

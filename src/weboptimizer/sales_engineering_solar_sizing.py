@@ -34,11 +34,12 @@ class SalesEngineeringInputs:
     Maps directly to ScenarioStudy initialization parameters.
     """
     id: int | None = None
+    scenario_name: str = ""
 
     # Study parameters
     start_date: str = '2026-01-01'
     study_years: int = 2
-    optimize_sizing: bool = False  # If True, run sizing_optimizer; else sizing_sweep
+    optimize_sizing: bool = True  # If True, run sizing_optimizer; else sizing_sweep
 
     # DataFrames (required uploads)
     unit_solar_timeseries_kw: pd.DataFrame | None = None
@@ -87,6 +88,16 @@ class SalesEngineeringInputs:
         if missing:
             return False, f"Missing required data: {', '.join(missing)}"
         return True, "OK"
+    
+    def validate_scenario_count(self) -> tuple[bool, str]:
+        """Validate that the number of scenarios is reasonable."""
+        if not self.optimize_sizing:
+            n_battery_scenarios = (self.max_battery_units - self.min_battery_units) + 1
+            n_solar_scenarios = (self.max_solar_units - self.min_solar_units) + 1
+            total_scenarios = n_battery_scenarios * n_solar_scenarios
+            if total_scenarios > 10:
+                return False, f"Too many scenarios ({total_scenarios}). Please reduce the range to generate <= 10 scenarios."
+        return True, "OK"
 
     def to_scenario_study(self) -> ScenarioStudy:
         """Convert WebInputs to ScenarioStudy backend object."""
@@ -131,6 +142,11 @@ class SalesEngineeringInputs:
         valid, msg = self.validate_dataframes()
         if not valid:
             raise ValueError(msg)
+        
+        # Validate scenario count
+        valid, msg = self.validate_scenario_count()
+        if not valid:
+            raise ValueError(msg)
 
         # Create ScenarioStudy
         scenario_study = self.to_scenario_study()
@@ -143,7 +159,7 @@ class SalesEngineeringInputs:
 
         # Convert results to outputs
         outputs = []
-        for i, result in enumerate(results):
+        for i, result in enumerate(results):  # these are ResultSummary objects
             output = SalesEngineeringOutputs.from_result_summary(
                 result,
                 scenario_id=self.id if i == 0 else None
@@ -160,43 +176,38 @@ class SalesEngineeringOutputs:
     Stores ResultSummary data in a format suitable for display.
     """
     id: int | None = None
+    scenario_name: str = ""
     summary_stats: pd.Series | None = None
     sizing_results: dict | None = None
     optimization_status: str | None = None
     financial_summary: dict | None = None
 
     @classmethod
-    def from_result_summary(cls, result: ResultSummary, scenario_id: int | None = None) -> 'SalesEngineeringOutputs':
+    def from_result_summary(cls, result: ResultSummary, scenario_id: int | None = None, scenario_name: str = "") -> 'SalesEngineeringOutputs':
         """Create WebOutputs from a ResultSummary object."""
+        # Auto-generate name from sizing results if not provided
+        if not scenario_name and result.sizing_results:
+            n_batt = result.sizing_results.get('n_batt_blocks', 0)
+            n_solar = result.sizing_results.get('n_solar', 0)
+            scenario_name = f"{n_batt} batts, {n_solar} solar"
+        
         return cls(
             id=scenario_id,
+            scenario_name=scenario_name,
             summary_stats=result.summary_stats,
             sizing_results=result.sizing_results,
             optimization_status=result.optimization_status,
             financial_summary=result.financial_summary,
         )
 
-    def render_summary_table(self) -> str:
-        """Render summary stats as a formatted table string."""
+    def render_summary_table(self) -> pd.DataFrame:
+        """Render summary stats as a DataFrame for display."""
         if self.summary_stats is None:
-            return "No results available"
-
-        # Format the stats nicely
-        lines = ["Summary Statistics:", "=" * 50]
-        for key, value in self.summary_stats.items():
-            if isinstance(value, (int, float)):
-                lines.append(f"{key:.<40} {value:>10,.2f}")
-            else:
-                lines.append(f"{key:.<40} {value:>10}")
-
-        # Add sizing info
-        if self.sizing_results:
-            lines.append("\n" + "Sizing Results:")
-            lines.append("=" * 50)
-            for key, value in self.sizing_results.items():
-                lines.append(f"{key:.<40} {value:>10}")
-
-        return "\n".join(lines)
+            return pd.DataFrame({"Message": ["No results available"]})
+        results_to_show = pd.concat([self.summary_stats.copy(),
+                                     pd.Series(self.sizing_results)
+                                     ])
+        return pd.DataFrame(results_to_show)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for display."""
@@ -256,30 +267,34 @@ class SalesEngineeringScenario:
 # Consolidated Results Display
 # ============================================================================
 
-def show_consolidated_results(all_outputs: list[SalesEngineeringOutputs]) -> str:
+def show_consolidated_results(all_outputs: list[SalesEngineeringOutputs]) -> pd.DataFrame:
     """Generate a consolidated view of all scenario results."""
     if not all_outputs:
-        return "No results available"
+        return pd.DataFrame({"Message": ["No results available"]})
 
-    lines = ["Consolidated Results:", "=" * 80, ""]
-
-    for i, output in enumerate(all_outputs, 1):
-        lines.append(f"Scenario {i} (ID: {output.id}):")
-        lines.append("-" * 40)
-
+    data = []
+    for output in all_outputs:
+        row = {
+            "ID": output.id,
+            "Name": output.scenario_name or "Unnamed",
+            "Status": output.optimization_status or "N/A"
+        }
+        
         if output.sizing_results:
-            lines.append(f"  Solar Units: {output.sizing_results.get('n_solar', 'N/A')}")
-            lines.append(f"  Battery Blocks: {output.sizing_results.get('n_batt_blocks', 'N/A')}")
-
+            row["Solar Units"] = output.sizing_results.get('n_solar', 'N/A')
+            row["Battery Blocks"] = output.sizing_results.get('n_batt_blocks', 'N/A')
+        else:
+            row["Solar Units"] = "N/A"
+            row["Battery Blocks"] = "N/A"
+        
         if output.summary_stats is not None and 'grid_imports_kwh' in output.summary_stats:
-            lines.append(f"  Grid Imports: {output.summary_stats['grid_imports_kwh']:,.0f} kWh/yr")
+            row["Grid Imports (kWh/yr)"] = f"{output.summary_stats['grid_imports_kwh']:,.0f}"
+        else:
+            row["Grid Imports (kWh/yr)"] = "N/A"
+        
+        data.append(row)
 
-        if output.optimization_status:
-            lines.append(f"  Status: {output.optimization_status}")
-
-        lines.append("")
-
-    return "\n".join(lines)
+    return pd.DataFrame(data)
 
 
 # ============================================================================
@@ -298,6 +313,9 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
     outputs = scenario.outputs
 
     # ===== Input Widgets =====
+
+    # Scenario name
+    scenario_name_input = pn.widgets.TextInput(name="Scenario Name", value=inputs.scenario_name or f"Scenario {scenario.id}", width=250)
 
     # Study parameters section
     study_params_header = pn.pane.Markdown("### Study Parameters")
@@ -345,27 +363,32 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
     copy_btn = pn.widgets.Button(name="📋 Copy", button_type="default", width=100)
     remove_btn = pn.widgets.Button(name="🗑 Remove", button_type="danger", width=100)
 
-    # Output display
-    output_display = pn.widgets.TextAreaInput(
+    # Output display - using Tabulator for proper table display
+    initial_df = outputs.render_summary_table() if outputs.summary_stats is not None else pd.DataFrame({"Message": ["Click Compute to run optimization"]})
+    output_display = pn.widgets.Tabulator(
+        initial_df,
         name="Results",
-        value=outputs.render_summary_table() if outputs.summary_stats is not None else "Click Compute to run optimization",
         height=300,
         disabled=True,
-        styles={"font-family": "monospace", "font-size": "11px"}
+        show_index=True,
+        sizing_mode='stretch_width'
     )
 
-    # Status indicator
+    # Status indicator with loading support
+    status_indicator = pn.indicators.LoadingSpinner(value=False, width=20, height=20)
     status_text = pn.widgets.StaticText(
         name="Status",
         value="Ready" if outputs.optimization_status is None else outputs.optimization_status,
-        width=200
+        width=180
     )
+    status_row = pn.Row(status_indicator, status_text)
 
     # ===== Container Layout =====
 
     scenario_box = pn.Column(
         pn.pane.Markdown(f"## Scenario {scenario.id}"),
-        pn.Row(status_text),
+        scenario_name_input,
+        status_row,
         pn.Row(compute_btn, copy_btn, remove_btn),
 
         study_params_header,
@@ -406,6 +429,7 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
         """Collect all input values from widgets."""
         return SalesEngineeringInputs(
             id=scenario.id,
+            scenario_name=scenario_name_input.value,
             start_date=start_date_input.value,
             study_years=study_years_input.value,
             optimize_sizing=optimize_checkbox.value,
@@ -421,10 +445,9 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
     def update_consolidated_results():
         """Update the consolidated results display."""
         all_outputs = list(scenario_outputs_registry.values())
-        if all_outputs:
-            consolidated_results_display.value = show_consolidated_results(all_outputs)
-        else:
-            consolidated_results_display.value = "No results available"
+        df = show_consolidated_results(all_outputs)
+        # Update the Tabulator widget with the new dataframe
+        consolidated_results_display.value = df
 
     # ===== Callbacks =====
 
@@ -504,6 +527,7 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
         """Run the optimization computation."""
         try:
             status_text.value = "Computing..."
+            status_indicator.value = True  # Show loading spinner
             compute_btn.loading = True
 
             # Collect current inputs
@@ -517,16 +541,37 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
             output_display.value = updated_output.render_summary_table()
             scenario_outputs_registry[scenario.id] = updated_output
             status_text.value = updated_output.optimization_status or "Complete"
+            
+            # Update scenario name if it was auto-generated
+            if updated_output.scenario_name and not scenario_name_input.value:
+                scenario_name_input.value = updated_output.scenario_name
 
             # If multiple results, create new scenarios for results[1:]
             if len(results) > 1:
                 max_idx = max(scenarios_registry.keys()) if scenarios_registry else 0
                 for i, result_output in enumerate(results[1:], 1):
                     new_idx = max_idx + i
+                    
+                    # Set min/max units based on sizing results
+                    if result_output.sizing_results:
+                        n_batt = int(result_output.sizing_results.get('n_batt_blocks', 0))
+                        n_solar = int(result_output.sizing_results.get('n_solar', 0))
+                        new_inputs = attrs.evolve(
+                            current_inputs,
+                            id=new_idx,
+                            scenario_name=result_output.scenario_name,
+                            min_battery_units=n_batt,
+                            max_battery_units=n_batt,
+                            min_solar_units=n_solar,
+                            max_solar_units=n_solar
+                        )
+                    else:
+                        new_inputs = attrs.evolve(current_inputs, id=new_idx, scenario_name=result_output.scenario_name)
+                    
                     # Create new scenario with same inputs but different output
                     new_scenario = SalesEngineeringScenario(
                         id=new_idx,
-                        inputs=attrs.evolve(current_inputs, id=new_idx),
+                        inputs=new_inputs,
                         outputs=attrs.evolve(result_output, id=new_idx)
                     )
                     add_callback(new_idx, new_scenario)
@@ -537,10 +582,11 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
 
         except Exception as e:
             status_text.value = f"Error"
-            output_display.value = f"Error: {str(e)}"
+            output_display.value = pd.DataFrame({"Error": [str(e)]})
             pn.state.notifications.error(f"Computation failed: {e}")
         finally:
             compute_btn.loading = False
+            status_indicator.value = False  # Hide loading spinner
 
     def on_copy(event):
         """Copy this scenario to a new one."""
@@ -548,10 +594,11 @@ def create_scenario_ui(scenario_idx: int, scenario: SalesEngineeringScenario,
         new_id = max_idx + 1
 
         # Create a copy with new ID
+        copied_inputs = attrs.evolve(collect_inputs(), id=new_id, scenario_name=f"Copy of {scenario_name_input.value}")
         copied_scenario = SalesEngineeringScenario(
             id=new_id,
-            inputs=attrs.evolve(collect_inputs(), id=new_id),
-            outputs=SalesEngineeringOutputs(id=new_id)
+            inputs=copied_inputs,
+            outputs=SalesEngineeringOutputs(id=new_id, scenario_name=copied_inputs.scenario_name)
         )
 
         add_callback(new_id, copied_scenario)
@@ -611,10 +658,11 @@ def create_app():
     def on_add_scenario(event):
         """Create a new scenario."""
         next_idx = max(scenarios.keys()) + 1 if scenarios else 1
+        scenario_name = f"Scenario {next_idx}"
         default_scenario = SalesEngineeringScenario(
             id=next_idx,
-            inputs=SalesEngineeringInputs(id=next_idx),
-            outputs=SalesEngineeringOutputs(id=next_idx)
+            inputs=SalesEngineeringInputs(id=next_idx, scenario_name=scenario_name),
+            outputs=SalesEngineeringOutputs(id=next_idx, scenario_name=scenario_name)
         )
         add_scenario(next_idx, default_scenario)
         pn.state.notifications.info(f"Scenario {next_idx} added")
@@ -628,12 +676,13 @@ def create_app():
         # sizing_mode="stretch_width"
     )
 
-    consolidated_results_display = pn.widgets.TextAreaInput(
+    consolidated_results_display = pn.widgets.Tabulator(
+        pd.DataFrame({"Message": ["No results available"]}),
         name="Consolidated Results",
-        value="No results available",
         height=300,
         disabled=True,
-        styles={"font-family": "monospace", "font-size": "12px"}
+        show_index=False,
+        sizing_mode='stretch_width'
     )
 
     # Add Scenario button
@@ -643,8 +692,8 @@ def create_app():
     # Initialize with one scenario
     initial_scenario = SalesEngineeringScenario(
         id=1,
-        inputs=SalesEngineeringInputs(id=1),
-        outputs=SalesEngineeringOutputs(id=1)
+        inputs=SalesEngineeringInputs(id=1, scenario_name="Scenario 1"),
+        outputs=SalesEngineeringOutputs(id=1, scenario_name="Scenario 1")
     )
     add_scenario(1, initial_scenario)
 
